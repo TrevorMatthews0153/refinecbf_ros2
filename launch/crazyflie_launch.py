@@ -92,21 +92,6 @@ def generate_launch_description():
                         },
                         ]
         ),
-
-        Node(
-            package='refinecbf_ros2',
-            executable='disturbance_node.py',
-            name='disturbance_node',
-            condition=LaunchConfigurationEquals('backend', 'sim'),
-            output='screen',
-            parameters=[topics_config_path,
-                        {'robot': robot,
-                         'exp': LaunchConfiguration('exp'),
-                         'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
-                         },
-                        ]
-
-        ),
         Node(
             package='refinecbf_ros2',
             executable='cf_visualization.py',
@@ -139,8 +124,6 @@ def generate_launch_description():
                 'vf_update_method': LaunchConfiguration('vf_update_method'),
                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
                 'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
-                'sensing_online': LaunchConfiguration('sensing_online'),
-                'wait_to_start_hj': LaunchConfiguration('wait_to_start_hj'),
             }.items()
         ),
         GroupAction(
@@ -150,7 +133,6 @@ def generate_launch_description():
                 SetRemap('/cf231/takeoff', cf_topics_config['services']['takeoff']),
                 SetRemap('/cf231/notify_setpoints_stop', cf_topics_config['services']['stop_setpoints']),
                 SetRemap('/cf231/cmd_vel_legacy', topics_config['topics']['robot_safe_control']),
-                SetRemap('/cf231/disturbance', topics_config['topics']['robot_disturbance']),
 
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource([

@@ -26,8 +26,6 @@ class CrazyflieInterface(BaseInterface):
 
     state_msg_type = Odometry
     control_out_msg_type = Twist
-    external_control_msg_type = Twist
-    disturbance_out_msg_type = FullState
 
     def __init__(self):
         super().__init__("crazyflie_interface")
@@ -36,7 +34,6 @@ class CrazyflieInterface(BaseInterface):
             "",
             [
                 ("topics.in_flight", rclpy.Parameter.Type.STRING),
-                ("topics.external_setpoint", "/external_setpoint"),
                 ("services.target_position", rclpy.Parameter.Type.STRING),
                 ("services.takeoff", rclpy.Parameter.Type.STRING),
                 ("services.land", rclpy.Parameter.Type.STRING),
@@ -65,12 +62,6 @@ class CrazyflieInterface(BaseInterface):
         stop_setpoints_service = self.get_parameter("services.stop_setpoints").value
         self.notifySetpointsStopService = self.create_client(NotifySetpointsStop, stop_setpoints_service)
         self.notifySetpointsStopService.wait_for_service()
-
-        # External setpoint setup
-        self.declare_parameter("control.external_setpoint_buffer", 5.0)
-        self.external_setpoint_time_buffer = self.get_parameter("control.external_setpoint_buffer").value
-        self.external_setpoint_ts = None
-        self.external_setpoint = None
 
         self.target_position_topic = self.get_parameter("services.target_position").value
         self.lqr_target_service = self.create_client(HighLevelCommand, self.target_position_topic)
@@ -223,22 +214,6 @@ class CrazyflieInterface(BaseInterface):
         max_values = np.array([self.max_roll, self.max_pitch, self.max_yawrate, self.max_thrust])
         rpyt_converted = np.minimum(max_values, np.maximum(min_values, rpyt_converted))
         return rpyt_converted
-
-    def process_external_control(self, control_in_msg):
-        self.external_control_robot = control_in_msg
-        control = control_in_msg.control
-        control_out_msg = Array()
-        control_out_msg.value = [np.tan(control.roll), control.pitch, control.yaw_dot, control.thrust]
-        return control_out_msg
-
-    def process_disturbance(self, disturbance_in_msg):
-        disturbance_in = disturbance_in_msg.value
-        disturbance_out_msg = self.disturbance_out_msg_type()
-        disturbance_out_msg.pose.position.y = disturbance_in[0]
-        disturbance_out_msg.pose.position.z = disturbance_in[1]
-        disturbance_out_msg.twist.linear.y = disturbance_in[2]
-        disturbance_out_msg.twist.linear.z = disturbance_in[3]
-        return disturbance_out_msg
 
     def override_safe_control(self):
         return not self.is_in_flight  # If not in flight, override

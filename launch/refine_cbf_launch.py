@@ -38,14 +38,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', 
             description='Use simulation (Gazebo) clock if true'),
-        DeclareLaunchArgument(
-            'sensing_online',
-            description='Do we sense changes in the environment?'
-        ),
-        DeclareLaunchArgument(
-            'wait_to_start_hj', 
-            description='Wait for service to start HJ reachability'
-        ),
+
 
         Node(
             package='refinecbf_ros2',
@@ -59,7 +52,6 @@ def generate_launch_description():
                  'robot': LaunchConfiguration('robot'),
                  'exp': LaunchConfiguration('exp'),
                  'use_sim_time': LaunchConfiguration('use_sim_time'),
-                 'sensing_online': LaunchConfiguration('sensing_online'),
                  }
             ]),
 
@@ -72,7 +64,6 @@ def generate_launch_description():
                          'vf_update_method': LaunchConfiguration('vf_update_method'),
                          'exp': LaunchConfiguration('exp'),
                          'use_sim_time': LaunchConfiguration('use_sim_time'),
-                         'sensing_online': LaunchConfiguration('sensing_online'),
                          },
                         ]
         ),
@@ -89,25 +80,10 @@ def generate_launch_description():
                  'vf_update_method': LaunchConfiguration('vf_update_method'),
                  'robot': LaunchConfiguration('robot'),
                  'exp': LaunchConfiguration('exp'),
-                 'sensing_online': LaunchConfiguration('sensing_online'),
                  'use_sim_time': LaunchConfiguration('use_sim_time'),
-                 'wait_to_start_hj': LaunchConfiguration('wait_to_start_hj'),
                 }
                 
             ],
             condition=IfCondition(LaunchConfiguration('safety_filter_active')),
             ),
-        Node(
-            package='refinecbf_ros2',
-            executable='modify_environment.py',
-            name='modify_environment_node',
-            output='screen',
-            parameters=[
-                topics_config,
-                {'robot': LaunchConfiguration('robot'),
-                 'exp': LaunchConfiguration('exp'),
-                 'use_sim_time': LaunchConfiguration('use_sim_time'),
-                }
-            ],
-        )
         ])

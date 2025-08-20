@@ -26,10 +26,7 @@ class ObstacleNode(Node):
         # Config:
         self.config = Config(self, hj_setup=True, obstacle_setup=True)
         self.dynamics = self.config.dynamics
-        self.detection_obstacles = self.config.detection_obstacles
-        self.service_obstacles = self.config.service_obstacles
         self.active_obstacles = self.config.active_obstacles
-        self.update_obstacles = self.config.update_obstacles
         self.active_obstacle_names = self.config.active_obstacle_names
         self.boundary = self.config.boundary
         self.safety_states_idis = self.config.safety_states
@@ -43,7 +40,6 @@ class ObstacleNode(Node):
                 ("topics.sdf_update", rclpy.Parameter.Type.STRING),
                 ("topics.obstacle_update", rclpy.Parameter.Type.STRING),
                 ("topics.cbf_state", rclpy.Parameter.Type.STRING),
-                ("services.activate_obstacle", rclpy.Parameter.Type.STRING),
             ],
         )
         sdf_update_topic = self.get_parameter("topics.sdf_update").value
@@ -59,44 +55,11 @@ class ObstacleNode(Node):
 
         # Subscribers:
         cbf_state_topic = self.get_parameter("topics.cbf_state").value
-        self.subscription = self.create_subscription(Array, cbf_state_topic, self.callback_state, 1)
+        self.create_subscription(Array, cbf_state_topic, self.callback_state, 1)
 
-        # Services:
-        activate_obstacle_service = self.get_parameter("services.activate_obstacle").value
-        self.srv = self.create_service(ActivateObstacle, activate_obstacle_service, self.handle_activate_obstacle)
-
-        # Timer setup for running obstacle detection at fixed rate
-        detection_rate = self.declare_parameter("obstacle_detection_rate", 1.0).value  # Detection rate in Hz
-        self.detection_timer = self.create_timer(1.0 / detection_rate, self.obstacle_detection)
         # Initialize and Update Obstacles
         self.update_sdf()
         self.update_active_obstacles()
-        self.startTime = self.get_clock().now().seconds_nanoseconds()[0]
-
-    def obstacle_detection(self):
-        updatesdf = False
-        for obstacle in self.detection_obstacles:
-            if obstacle not in self.active_obstacles:
-                if (
-                    self.robot_state is not None
-                    and obstacle.distance_to_obstacle(self.robot_state) <= obstacle.detectionRadius
-                ):
-                    self.get_logger().info("Obstacle Detected: {}".format(obstacle.obstacleName))
-                    self.active_obstacles.append(obstacle)
-                    self.active_obstacle_names.append(obstacle.obstacleName)
-                    updatesdf = True
-        for obstacle in self.update_obstacles:
-            if obstacle not in self.active_obstacles:
-                when_to_update = self.get_clock().now().seconds_nanoseconds()[0] - self.startTime
-                if when_to_update >= obstacle.updateTime:
-                    self.get_logger().info("Obstacle appeared: {}".format(obstacle.obstacleName))
-                    self.active_obstacles.append(obstacle)
-                    self.active_obstacle_names.append(obstacle.obstacleName)
-                    updatesdf = True
-
-        if updatesdf:
-            self.update_sdf()
-            self.update_active_obstacles()
 
     def update_sdf(self):
         sdf = hj.utils.multivmap(self.build_sdf(), jnp.arange(self.config.grid.ndim))(self.config.grid.states) # * 10
@@ -122,18 +85,6 @@ class ObstacleNode(Node):
             return sdf_val
 
         return sdf
-
-    def handle_activate_obstacle(self, request, response):
-        obstacle_index = request.obstacle_number
-        if obstacle_index >= len(self.service_obstacles):
-            response.output = "Invalid Obstacle Number"
-        elif self.service_obstacles[obstacle_index] in self.active_obstacles:
-            response.output = "Obstacle Already Active"
-        else:
-            self.active_obstacles.append(self.service_obstacles[obstacle_index])
-            self.update_sdf()
-            response.output = "Obstacle Activated"
-        return response
 
 
 def main(args=None):

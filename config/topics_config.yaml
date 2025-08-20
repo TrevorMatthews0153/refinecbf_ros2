@@ -4,17 +4,11 @@
       robot_state: '/state'
       cbf_state: '/safety_filter/state'
 
-      disturbance_update: '/env/disturbance_update'
-      simulated_disturbance_update: '/env/sim_disturbance_update'
-      actuation_update: '/env/actuation_update'
       sdf_update: '/env/sdf_update'
       vf_update: '/safety_filter/vf_update'
-
       robot_safe_control: '/robot/final_control'
       cbf_safe_control: '/safety_filter/safe_control'
       cbf_nominal_control: '/safety_filter/nominal_control'
-      robot_disturbance: '/robot/disturbance'
-      simulated_disturbance: '/stack/disturbance'
       value_function: '/safety_filter/value_function'
 
       obstacle_marker: '/visualization/obstacle_marker'
@@ -31,8 +25,5 @@
       target_state: '/safety_filter/target_state'
       intermediate_target_state: '/safety_filter/intermediate_target_state'
     services:
-      modify_environment: '/env/modify_environment'
-      activate_obstacle: '/env/activate_obstacle'
       highlevel_command: '/user/highlevel_command'
-      start_hj_updates: '/user/start_hj_updates'
       find_closest_safe_state: '/safety_filter/find_closest_safe_state'

@@ -45,8 +45,6 @@ class SafetyFilterNode(Node):
                 ("topics.cbf_state", rclpy.Parameter.Type.STRING),
                 ("topics.cbf_nominal_control", rclpy.Parameter.Type.STRING),
                 ("topics.cbf_safe_control", rclpy.Parameter.Type.STRING),
-                ("topics.actuation_update", rclpy.Parameter.Type.STRING),
-                ("topics.disturbance_update", rclpy.Parameter.Type.STRING),
                 ("topics.value_function", rclpy.Parameter.Type.STRING),
                 ("services.find_closest_safe_state", rclpy.Parameter.Type.STRING),
             ],
@@ -106,23 +104,6 @@ class SafetyFilterNode(Node):
         filtered_control_topic = self.get_parameter("topics.cbf_safe_control").value
         self.pub_filtered_control = self.create_publisher(Array, filtered_control_topic, 1)
 
-        self.declare_parameter("sensing_online", rclpy.Parameter.Type.BOOL)
-        self.sensing_online = self.get_parameter("sensing_online").value
-        
-        if self.sensing_online:
-            actuation_update_topic = self.get_parameter("topics.actuation_update").value
-            self.actuation_update_sub = self.create_subscription(
-                HiLoArray, actuation_update_topic, self.callback_actuation_update, 
-                1, callback_group=self.other_callback_group
-            )
-
-            # Optional disturbance updates
-            if self.config.disturbance_space["n_dims"] != 0:
-                disturbance_update_topic = self.get_parameter("topics.disturbance_update").value
-                self.disturbance_update_sub = self.create_subscription(
-                    HiLoArray, disturbance_update_topic, self.callback_disturbance_update, 
-                    1, callback_group=self.other_callback_group
-                )
         find_safe_state_service = self.get_parameter("services.find_closest_safe_state").value
         self.create_service(ProcessState, find_safe_state_service, self.find_closest_safe_state_service,
                             callback_group=self.service_callback_group)
@@ -140,15 +121,6 @@ class SafetyFilterNode(Node):
             self.initialized_safety_filter = True
             self.safety_filter_solver = lambda state, nominal_control: nominal_control
             self.get_logger().warn("No safety filter, be careful!")
-
-    def callback_actuation_update(self, msg):
-        self.safety_filter_solver.umin = np.array(msg.lo)
-        self.safety_filter_solver.umax = np.array(msg.hi)
-
-    def callback_disturbance_update(self, msg):
-        self.safety_filter_solver.dmin = np.array(msg.lo)
-        self.safety_filter_solver.dmax = np.array(msg.hi)
-        self.get_logger().info(f"Updated disturbance bounds: {self.safety_filter_solver.dmin}, {self.safety_filter_solver.dmax}")
 
     def callback_vf_update_file(self, vf_msg):
         if not vf_msg.data:

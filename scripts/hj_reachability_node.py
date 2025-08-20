@@ -12,6 +12,9 @@ from std_srvs.srv import Trigger
 from config import Config, QuadraticCBF
 from refine_cbfs import HJControlAffineDynamics, TabularControlAffineCBF
 from example_interfaces.msg import Bool
+# jax cpu only
+import jax
+jax.config.update("jax_platform_name", "cpu")
 import threading
 import time
 from utils import load_parameters, load_array
@@ -50,10 +53,7 @@ class HJReachabilityNode(Node):
             "",
             [
                 ("topics.sdf_update", rclpy.Parameter.Type.STRING),
-                ("topics.disturbance_update", rclpy.Parameter.Type.STRING),
-                ("topics.actuation_update", rclpy.Parameter.Type.STRING),
                 ("topics.vf_update", rclpy.Parameter.Type.STRING),
-                ("services.start_hj_updates", rclpy.Parameter.Type.STRING),
             ],
         )
 
@@ -62,10 +62,7 @@ class HJReachabilityNode(Node):
         self.declare_parameter("vf_initialization_method", "sdf")
         self.declare_parameter("initial_vf_file", "None")
         self.declare_parameter("update_vf_online", True)
-        self.declare_parameter("wait_to_start_hj", False)
-        self.declare_parameter("sensing_online", True)
-        self.sensing_online = self.get_parameter("sensing_online").value
-        self.service_to_start = self.get_parameter("wait_to_start_hj").value
+        self.service_to_start = False
         control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
 
         self.vf_update_method = self.get_parameter("vf_update_method").value
@@ -129,29 +126,8 @@ class HJReachabilityNode(Node):
         else:  # self.vf_update_method == "file"
             self.vf_pub = self.create_publisher(Bool, self.vf_topic, 1)
 
-        # Subscribers setup
-        if self.sensing_online:
-            disturbance_update_topic = self.get_parameter("topics.disturbance_update").value
-            self.disturbance_update_sub = self.create_subscription(
-                HiLoArray, disturbance_update_topic, self.callback_disturbance_update, 1
-            )
-
-            actuation_update_topic = self.get_parameter("topics.actuation_update").value
-            self.actuation_update_sub = self.create_subscription(
-                HiLoArray, actuation_update_topic, self.callback_actuation_update, 1
-            )
-        else:
-            self.get_logger().warn("No sensing, disturbance and actuation updates are not being processed")
-
         # Start updating the value function
         self.publish_initial_vf()
-        self.start_updates = threading.Event()
-        if not self.service_to_start:
-            self.start_updates.set()
-        else:
-            start_hj_service = self.get_parameter("services.start_hj_updates").value
-            self.create_service(Trigger, start_hj_service, self.start_hj_updates_service)
-        self.start_updates.wait()
         self.update_vf()  # This method spins indefinitely
 
     def spin(self):
@@ -170,35 +146,6 @@ class HJReachabilityNode(Node):
         else:  # self.vf_update_method == "file"
             np.save("vf.npy", self.vf.copy())
             self.vf_pub.publish(Bool(data=True))  # Publish a Bool message indicating completion
-
-    def callback_disturbance_update(self, msg):
-        """
-        Callback for the disturbance update subscriber.
-
-        Args:
-            msg (HiLoArray): The incoming disturbance update message.
-
-        This method updates the disturbance space and the dynamics.
-        """
-        max_disturbance = msg.hi
-        min_disturbance = msg.lo
-        self.disturbance_space = hj.sets.Box(lo=jnp.array(min_disturbance), hi=jnp.array(max_disturbance))
-        self.get_logger().info(f"Disturbance space updated to {self.disturbance_space}")
-        self.update_dynamics()  # FIXME:Check whether this is required or happens automatically
-
-    def callback_actuation_update(self, msg):
-        """
-        Callback for the actuation update subscriber.
-
-        Args:
-            msg (HiLoArray): The incoming actuation update message.
-
-        This method updates the control space and the dynamics.
-        """
-        max_control = msg.hi
-        min_control = msg.lo
-        self.control_space = hj.sets.Box(lo=jnp.array(min_control), hi=jnp.array(max_control))
-        self.update_dynamics()  # FIXME:Check whether this is required or happens automatically
 
     def callback_sdf_update_pubsub(self, msg):
         """
@@ -229,27 +176,6 @@ class HJReachabilityNode(Node):
             self.solver_settings = hj.SolverSettings.with_accuracy(
                 self.vf_update_accuracy, value_postprocessor=self.brt(self.sdf_values)
             )
-    
-    def start_hj_updates_service(self, request, response):
-        if not self.start_updates.is_set():
-            self.start_updates.set()
-            self.get_logger().info("HJ updates started")
-            response.success = True
-            response.message = "HJ updates started"
-        else:
-            response.success = False
-            response.message = "HJ updates already started"
-        return response
-
-    def update_dynamics(self):
-        """
-        Updates the Hamilton-Jacobi dynamics based on the current control and disturbance spaces.
-        """
-        self.hj_dynamics = HJControlAffineDynamics(
-            self.dynamics,
-            control_space=self.control_space,
-            disturbance_space=self.disturbance_space,
-        )
 
     def update_vf(self):
         """

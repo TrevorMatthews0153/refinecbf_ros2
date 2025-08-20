@@ -30,8 +30,6 @@ class Config:
         self.grid_shape = np.array(self.state_domain["resolution"])
 
         self.obstacle_list = config.get("obstacles", [])
-        self.actuation_updates_list = config["actuation_updates"]
-        self.disturbance_updates_list = config["disturbance_updates"]
         self.boundary_env = config["boundary"]        
 
         if hj_setup:
@@ -57,9 +55,6 @@ class Config:
 
         if obstacle_setup:
             (
-                self.detection_obstacles,
-                self.service_obstacles,
-                self.update_obstacles,
                 self.active_obstacles,
                 self.active_obstacle_names,
                 self.boundary,
@@ -85,128 +80,34 @@ class Config:
                 self.boundary_env["indices"])
             assert len(self.boundary_env["maxVal"]) == len(
                 self.boundary_env["indices"])
-
-    def setup_environment(self):
-        pass # TODO: Judy
     
     def setup_obstacles(self):
         # Obstacles that are "detected" by the robot when in close enough range
-        detection_obstacles = []
-        service_obstacles = []  # Obstalces that are activated by a service
-        update_obstacles = []  # Obstacles that become activated after a specified amount of time
         active_obstacles = []  # Obstacles that are always active
         active_obstacle_names = []  # Names of the active Obstacles
         if len(self.obstacle_list) != 0:
-            for name, obstacle in self.obstacle_list.items():
-                if obstacle["mode"] == "Detection":
-                    if obstacle["type"] == "Circle":
-                        detection_obstacles.append(
-                            Circle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                radius=obstacle["radius"],
-                                center=obstacle["center"],
-                                updateRule="Detection",
-                                padding=obstacle["padding"],
-                                detectionRadius=obstacle["detectionradius"],
-                            )
+            for name, obstacle in self.obstacle_list.items():      
+                active_obstacle_names.append(name)
+                if obstacle["type"] == "Circle":
+                    active_obstacles.append(
+                        Circle(
+                            stateIndices=obstacle["indices"],
+                            obstacleName=name,
+                            radius=obstacle["radius"],
+                            center=obstacle["center"],
+                            padding=obstacle["padding"],
                         )
-                    elif obstacle["type"] == "Rectangle":
-                        detection_obstacles.append(
-                            Rectangle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                minVal=obstacle["minVal"],
-                                maxVal=obstacle["maxVal"],
-                                updateRule="Detection",
-                                padding=obstacle["padding"],
-                                detectionRadius=obstacle["detectionradius"],
-                            )
+                    )
+                elif obstacle["type"] == "Rectangle":
+                    active_obstacles.append(
+                        Rectangle(
+                            stateIndices=obstacle["indices"],
+                            obstacleName=name,
+                            minVal=obstacle["minVal"],
+                            maxVal=obstacle["maxVal"],
+                            padding=obstacle["padding"],
                         )
-                    else:
-                        raise ValueError(
-                            "Invalid Obstacle Type: {}".format(obstacle["type"]))
-                elif obstacle["mode"] == "Update":
-                    if obstacle["type"] == "Circle":
-                        update_obstacles.append(
-                            Circle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                radius=obstacle["radius"],
-                                center=obstacle["center"],
-                                updateRule="Update",
-                                padding=obstacle["padding"],
-                                updateTime=obstacle["updatetime"],
-                            )
-                        )
-                    elif obstacle["type"] == "Rectangle":
-                        update_obstacles.append(
-                            Rectangle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                minVal=obstacle["minVal"],
-                                maxVal=obstacle["maxVal"],
-                                updateRule="Update",
-                                padding=obstacle["padding"],
-                                updateTime=obstacle["updatetime"],
-                            )
-                        )
-                    else:
-                        raise ValueError(
-                            "Invalid Obstacle Type: {}".format(obstacle["type"]))
-                elif obstacle["mode"] == "Service":
-                    if obstacle["type"] == "Circle":
-                        service_obstacles.append(
-                            Circle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                radius=obstacle["radius"],
-                                center=obstacle["center"],
-                                updateRule="Service",
-                                padding=obstacle["padding"],
-                            )
-                        )
-                    elif obstacle["type"] == "Rectangle":
-                        service_obstacles.append(
-                            Rectangle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                minVal=obstacle["minVal"],
-                                maxVal=obstacle["maxVal"],
-                                updateRule="Service",
-                                padding=obstacle["padding"],
-                            )
-                        )
-                elif obstacle["mode"] == "Active":
-                    active_obstacle_names.append(name)
-                    if obstacle["type"] == "Circle":
-                        active_obstacles.append(
-                            Circle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                radius=obstacle["radius"],
-                                center=obstacle["center"],
-                                updateRule="Active",
-                                padding=obstacle["padding"],
-                            )
-                        )
-                    elif obstacle["type"] == "Rectangle":
-                        active_obstacles.append(
-                            Rectangle(
-                                stateIndices=obstacle["indices"],
-                                obstacleName=name,
-                                minVal=obstacle["minVal"],
-                                maxVal=obstacle["maxVal"],
-                                updateRule="Active",
-                                padding=obstacle["padding"],
-                            )
-                        )
-                    else:
-                        raise ValueError(
-                            "Invalid Obstacle Type: {}".format(obstacle["type"]))
-                else:
-                    raise ValueError(
-                        "Invalid Obstacle Activation Type: {}".format(obstacle["mode"]))
+                    )
 
         boundary = Boundary(
             stateIndices=self.boundary_env["indices"],
@@ -215,7 +116,7 @@ class Config:
             padding=self.boundary_env["padding"],
         )
 
-        return detection_obstacles, service_obstacles, update_obstacles, active_obstacles, active_obstacle_names, boundary
+        return active_obstacles, active_obstacle_names, boundary
 
     def setup_dynamics(self):
         if self.dynamics_class == "quad_near_hover":
@@ -238,22 +139,18 @@ class Config:
 
 # Obstacle Classes
 class Obstacle:
-    def __init__(self, type, stateIndices, obstacleName, updateRule, padding, updateTime, detectionRadius) -> None:
+    def __init__(self, type, stateIndices, obstacleName, padding) -> None:
         self.type = type
         self.stateIndices = stateIndices
         self.obstacleName = obstacleName
-        self.updateRule = updateRule
         self.padding = padding
-        self.updateTime = updateTime
-        self.detectionRadius = detectionRadius
 
 
 class Circle(Obstacle):
     def __init__(
-        self, stateIndices, obstacleName, radius, center, updateRule="Time", padding=0, updateTime=None, detectionRadius=None
+        self, stateIndices, obstacleName, radius, center, padding=0
     ) -> None:
-        super().__init__("Circle", stateIndices, obstacleName,
-                         updateRule, padding, updateTime, detectionRadius)
+        super().__init__("Circle", stateIndices, obstacleName, padding)
         self.radius = radius
         self.center = jnp.reshape(np.array(center), (-1, 1))
 
@@ -275,10 +172,9 @@ class Circle(Obstacle):
 
 class Ellipse(Obstacle):
     def __init__(
-        self, stateIndices, obstacleName, axes, center, updateRule="Time", padding=0, updateTime=None, detectionRadius=None
+        self, stateIndices, obstacleName, axes, center, padding=0
     ) -> None:
-        super().__init__("Ellipse", stateIndices, obstacleName,
-                         updateRule, padding, updateTime, detectionRadius)
+        super().__init__("Ellipse", stateIndices, obstacleName, padding)
         self.axes = jnp.array(axes)  # (semi_major_axis, semi_minor_axis)
         self.center = jnp.reshape(jnp.array(center), (-1, 1))
 
@@ -337,13 +233,11 @@ class Ellipse(Obstacle):
         return distance - self.padding
 
 
-
 class Rectangle(Obstacle):
     def __init__(
-        self, stateIndices, obstacleName, minVal, maxVal, updateRule="Time", padding=0, updateTime=None, detectionRadius=None
+        self, stateIndices, obstacleName, minVal, maxVal, padding=0
     ) -> None:
-        super().__init__("Rectangle", stateIndices, obstacleName,
-                         updateRule, padding, updateTime, detectionRadius)
+        super().__init__("Rectangle", stateIndices, obstacleName, padding)
         self.minVal = jnp.reshape(np.array(minVal), (-1, 1))
         self.maxVal = jnp.reshape(np.array(maxVal), (-1, 1))
 
@@ -386,8 +280,7 @@ class Rectangle(Obstacle):
 
 class Boundary(Obstacle):
     def __init__(self, stateIndices, minVal, maxVal, padding=0) -> None:
-        super().__init__("Boundary", stateIndices, None, None,
-                         padding, updateTime=None, detectionRadius=None)
+        super().__init__("Boundary", stateIndices, None, padding)
         self.minVal = jnp.reshape(np.array(minVal), (-1, 1))
         self.maxVal = jnp.reshape(np.array(maxVal), (-1, 1))
 

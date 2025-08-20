@@ -24,11 +24,9 @@ install(DIRECTORY
 # ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  scripts/disturbance_node.py
   scripts/obstacle_node.py
   scripts/refine_cbf_node.py
   scripts/hj_reachability_node.py
-  scripts/modify_environment.py
   scripts/template/nominal_controller.py
   scripts/config.py
   scripts/utils.py
