@@ -23,7 +23,7 @@ def generate_launch_description():
     topics_config_path = os.path.join(get_package_share_directory(package_name), 'config', 'topics_config.yaml')
     topics_config = load_yaml(topics_config_path)['/**']['ros__parameters']
 
-    tb_topics_config_path = os.path.join(get_package_share_directory(package_name), 'config', 'turtlebot_topics_config.yaml')
+    tb_topics_config_path = os.path.join(get_package_share_directory(package_name), 'config', 'turtlebot', 'topics_config.yaml')
     tb_topics_config = load_yaml(tb_topics_config_path)['/**']['ros__parameters']
 
     return LaunchDescription([
@@ -34,29 +34,33 @@ def generate_launch_description():
             'update_vf_online', default_value='True',
             description='Update value function online using HJ Reachability'),
         DeclareLaunchArgument(
-            'vf_initialization_method', default_value='sdf',
+            'vf_initialization_method', default_value='file',
             description='Value function initialization method'),
         DeclareLaunchArgument(
             'backend', default_value='sim',
             description='sim or hardware backend for turtlebot'),
         DeclareLaunchArgument(
-            'vf_update_method', default_value='pubsub',
+            'vf_update_method', default_value='file',
             description='Message parsing method for VF update'),
         DeclareLaunchArgument(
             'vf_update_accuracy', default_value='high',
             description='Accuracy of HJ Reachability computation'),
         DeclareLaunchArgument(
-            'env_config_file', default_value='detection_env.yaml',
+            'env_config_file', default_value='env.yaml',
             description='Environment config file'),
         DeclareLaunchArgument(
-            'control_config_file', default_value='turtlebot_control.yaml',
+            'control_config_file', default_value='control.yaml',
             description='Control config file'),
         DeclareLaunchArgument(
             'CBF_parameter_file', default_value='turtlebot_CBF_params.yaml',
             description='CBF parameter file'),
         DeclareLaunchArgument(
-            'initial_vf_file', default_value='target_values_judy.npy',
+            'initial_vf_file', default_value='vf.npy',
             description='Initial VF file'),
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='true',
+            description='Use simulation (Gazebo) clock if true'),
         Node(
             package='refinecbf_ros2',
             executable='tb_nominal_controller.py',
@@ -64,6 +68,7 @@ def generate_launch_description():
             output='screen',
             parameters=[topics_config_path,
                         tb_topics_config_path,
+                        '/root/ros2_ws/src/refinecbf_ros2/config/tb.yaml',
                         {'env_config_file': LaunchConfiguration('env_config_file'),
                          'control_config_file': LaunchConfiguration('control_config_file'),
                          }
@@ -102,7 +107,7 @@ def generate_launch_description():
                 ])
             ]),
             launch_arguments={
-                topics_config_path: topics_config_path,
+                'topics_config_path': topics_config_path,
                 'env_config_file': LaunchConfiguration('env_config_file'),
                 'control_config_file': LaunchConfiguration('control_config_file'),
                 'safety_filter_active': LaunchConfiguration('safety_filter_active'),
@@ -112,21 +117,25 @@ def generate_launch_description():
                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
                 'CBF_parameter_file': LaunchConfiguration('CBF_parameter_file'),
                 'initial_vf_file': LaunchConfiguration('initial_vf_file'),
+                'use_sim_time' : LaunchConfiguration('use_sim_time')
             }.items()
         ),
         GroupAction(
             actions=[
                 SetRemap('/cmd_vel', topics_config['topics']['robot_safe_control']),
 
-                # IncludeLaunchDescription(
-                #     PythonLaunchDescriptionSource([
-                #         PathJoinSubstitution([
-                #             FindPackageShare('turtlebot3_fake'),
-                #             'launch',
-                #             'turtlebot3_fake.launch'
-                #         ])
-                #     ]),
-                # ),
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource([
+                        PathJoinSubstitution([
+                            FindPackageShare('turtlebot3_fake_node'),
+                            'launch',
+                            'turtlebot3_fake_node.launch.py'
+                        ])
+                    ]),
+                        launch_arguments={
+                            'use_sim_time': LaunchConfiguration('use_sim_time')
+                        }.items()
+                ),
             ]
         )
     ])

@@ -1,0 +1,29 @@
+controller_type: "PD"  # one of ["PD", "HJR"]
+nominal:
+  goal: #update later
+    coordinates:
+      - 1.0
+      - 2.0
+      - 0.0
+    padding:
+      - 0.05
+      - 0.05
+      - 0.5
+    max_time: 30.0
+    time_intervals: 101
+    solver_accuracy: "high"
+  frequency: 20.0
+external:
+  buffer_time: 1.0  # seconds
+  mod_buffer_time: 5.0  # seconds
+limits:
+  max_vel: 0.5
+  min_vel: -0.5
+  max_omega: 0.2
+
+asif:
+  gamma: 0.2
+  slack: True
+
+
+  

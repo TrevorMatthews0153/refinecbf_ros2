@@ -11,7 +11,6 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(example_interfaces REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(crazyflie_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 

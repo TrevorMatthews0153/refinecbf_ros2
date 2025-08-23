@@ -55,6 +55,7 @@ class TurtlebotInterface(BaseInterface):
         self.min_vel = self.get_parameter("limits.min_vel").value
         self.max_omega = self.get_parameter("limits.max_omega").value
         self.is_running = False
+        self.init_subscribers()
 
     def handle_high_level_command(self, request, response):
         if request.command == "start":

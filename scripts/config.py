@@ -389,3 +389,28 @@ class QuadraticCBF(ControlAffineCBF):
 
     def _grad_vf(self, state, time=0.0):
         return self._vf_grad(state, time)
+
+class InitialCBF(ControlAffineCBF):
+    def __init__(self, dynamics, grid_axes, psi_values, grad_x=None, grad_y=None, **kwargs):
+        #add smoothing here
+        self.psi_interp = RegularGridInterpolator(grid_axes, psi_values, bounds_error=False, fill_value=None)
+        self.grad_x_interp = (
+            RegularGridInterpolator(grid_axes, grad_x, bounds_error=False, fill_value=None) if grad_x is not None else None
+        )
+        self.grad_y_interp = (
+            RegularGridInterpolator(grid_axes, grad_y, bounds_error=False, fill_value=None) if grad_y is not None else None
+        )
+        super().__init__(dynamics, {}, **kwargs)
+
+    def vf(self, state, time=0.0):
+        query = np.atleast_2d(state)[..., :2]
+        # print(self.psi_interp(query)[0])
+        return self.psi_interp(query)
+    
+    def _grad_vf(self, state, time=0.0):
+        state = np.atleast_2d(state)       # ensure (1,3)
+        query = state[..., :2]
+        grad = np.zeros((state.shape[0], 3))  # ensure (1,3)
+        grad[:, 0] = self.grad_x_interp(query)
+        grad[:, 1] = self.grad_y_interp(query)
+        return grad

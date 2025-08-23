@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    robot: "turtlebot"
+    exp: 2
+    # topics:
+    #   sdf_update: '/env/sdf_update'
+    #   vf_update: '/safety_filter/vf_update'

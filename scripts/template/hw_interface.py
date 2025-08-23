@@ -64,6 +64,8 @@ class BaseInterface(Node):
         high_level_command_srv = self.get_parameter("services.highlevel_command").value
         self.create_service(HighLevelCommand, high_level_command_srv, self.handle_high_level_command)
 
+        self.init_subscribers()
+
     def init_subscribers(self):
         self.create_subscription(self.state_msg_type, self.robot_state_topic, self.callback_state, 1)
         self.create_subscription(Array, self.cbf_safe_control_topic, self.callback_safe_control, 1)

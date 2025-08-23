@@ -31,9 +31,11 @@ def generate_launch_description():
             description='Accuracy of HJ Reachability computation'),
         DeclareLaunchArgument(
             'robot',
+            default_value='turtlebot',
             description='Robot name'),
         DeclareLaunchArgument(
             'exp',
+            default_value="2",
             description='Which experiment to run'),
         DeclareLaunchArgument(
             'use_sim_time', 
@@ -55,35 +57,35 @@ def generate_launch_description():
                  }
             ]),
 
-        Node(
-            package='refinecbf_ros2',
-            executable='obstacle_node.py',
-            output='screen',
-            parameters=[topics_config,
-                        {'robot': LaunchConfiguration('robot'),
-                         'vf_update_method': LaunchConfiguration('vf_update_method'),
-                         'exp': LaunchConfiguration('exp'),
-                         'use_sim_time': LaunchConfiguration('use_sim_time'),
-                         },
-                        ]
-        ),
-        Node(
-            package='refinecbf_ros2',
-            executable='hj_reachability_node.py',
-            name='hj_reachability_node',
-            output='screen',
-            parameters=[
-                topics_config,
-                {'update_vf_online': LaunchConfiguration('update_vf_online'),
-                 'vf_initialization_method': LaunchConfiguration('vf_initialization_method'),
-                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
-                 'vf_update_method': LaunchConfiguration('vf_update_method'),
-                 'robot': LaunchConfiguration('robot'),
-                 'exp': LaunchConfiguration('exp'),
-                 'use_sim_time': LaunchConfiguration('use_sim_time'),
-                }
+        # Node(
+        #     package='refinecbf_ros2',
+        #     executable='obstacle_node.py',
+        #     output='screen',
+        #     parameters=[topics_config,
+        #                 {'robot': LaunchConfiguration('robot'),
+        #                  'vf_update_method': LaunchConfiguration('vf_update_method'),
+        #                  'exp': LaunchConfiguration('exp'),
+        #                  'use_sim_time': LaunchConfiguration('use_sim_time'),
+        #                  },
+        #                 ]
+        # ),
+        # Node(
+        #     package='refinecbf_ros2',
+        #     executable='hj_reachability_node.py',
+        #     name='hj_reachability_node',
+        #     output='screen',
+        #     parameters=[
+        #         topics_config,
+        #         {'update_vf_online': LaunchConfiguration('update_vf_online'),
+        #          'vf_initialization_method': LaunchConfiguration('vf_initialization_method'),
+        #          'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
+        #          'vf_update_method': LaunchConfiguration('vf_update_method'),
+        #          'robot': LaunchConfiguration('robot'),
+        #          'exp': LaunchConfiguration('exp'),
+        #          'use_sim_time': LaunchConfiguration('use_sim_time'),
+        #         }
                 
-            ],
-            condition=IfCondition(LaunchConfiguration('safety_filter_active')),
-            ),
+        #     ],
+        #     condition=IfCondition(LaunchConfiguration('safety_filter_active')),
+        #     ),
         ])

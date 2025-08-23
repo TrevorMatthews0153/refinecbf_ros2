@@ -126,7 +126,7 @@ class SafetyFilterNode(Node):
         if not vf_msg.data:
             return
         try:
-            self.back_buffer_cbf.vf_table = np.load("vf.npy").reshape(self.config.grid_shape)
+            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/vf.npy").reshape(self.config.grid_shape)
         except (ValueError, EOFError):
             self.get_logger().info("Value function file not found, waiting for next update")
             import time
