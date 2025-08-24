@@ -29,6 +29,7 @@ install(PROGRAMS
   scripts/template/nominal_controller.py
   scripts/config.py
   scripts/utils.py
+  scripts/gp2hjr_node.py
 
   scripts/crazyflie/cf_nominal_controller.py
   scripts/crazyflie/cf_hw_interface.py

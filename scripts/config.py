@@ -336,7 +336,7 @@ class DubinsCarDynamics(ControlAffineDynamics):
     """
 
     STATES = ["x", "y", "theta"]
-    CONTROLS = ["omega", "v"]
+    CONTROLS = ["v", "omega"]
     # DISTURBANCES = ["dx", "dy"]
 
     def open_loop_dynamics(self, state, time: float = 0):

@@ -85,6 +85,7 @@ def generate_launch_description():
                          'control_config_file': LaunchConfiguration('control_config_file'),
                          }
                          ],
+            remappings=[('robot/final_control', '/cmd_vel')]
         ),
         Node(
             package='refinecbf_ros2',
@@ -120,24 +121,24 @@ def generate_launch_description():
                 'use_sim_time' : LaunchConfiguration('use_sim_time')
             }.items()
         ),
-        GroupAction(
-            actions=[
-                SetRemap('/cmd_vel', topics_config['topics']['robot_safe_control']),
+        # GroupAction(
+        #     actions=[
+        #         SetRemap('/cmd_vel', topics_config['topics']['robot_safe_control']),
 
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource([
-                        PathJoinSubstitution([
-                            FindPackageShare('turtlebot3_fake_node'),
-                            'launch',
-                            'turtlebot3_fake_node.launch.py'
-                        ])
-                    ]),
-                        launch_arguments={
-                            'use_sim_time': LaunchConfiguration('use_sim_time')
-                        }.items()
-                ),
-            ]
-        )
+        #         IncludeLaunchDescription(
+        #             PythonLaunchDescriptionSource([
+        #                 PathJoinSubstitution([
+        #                     FindPackageShare('turtlebot3_fake_node'),
+        #                     'launch',
+        #                     'turtlebot3_fake_node.launch.py'
+        #                 ])
+        #             ]),
+        #                 launch_arguments={
+        #                     'use_sim_time': LaunchConfiguration('use_sim_time')
+        #                 }.items()
+        #         ),
+        #     ]
+        # )
     ])
 
 

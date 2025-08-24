@@ -131,6 +131,7 @@ class TurtlebotNominalControl(NominalController):
                 solver_accuracy=self.solver_accuracy,
                 target=self.target,
                 padding=self.padding,
+                progress_bar = True
             )
             self.get_logger().info("Solving for nominal control...")
             self.controller = self.controller_prep.get_nominal_control

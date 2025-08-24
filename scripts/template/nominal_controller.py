@@ -22,6 +22,7 @@ class NominalController(Node):
 
     def __init__(self, node_name, hj_setup=False):
         super().__init__(node_name)
+        print(hj_setup)
         self.config = Config(self, hj_setup=hj_setup)
         # Get topics from parameters
         self.declare_parameters(
@@ -38,13 +39,15 @@ class NominalController(Node):
         self.state_sub = self.create_subscription(Array, state_topic, self.callback_state, 1)
         self.control_pub = self.create_publisher(Array, nominal_control_topic, 1)
 
+        self.state = None
+        self.controller = None
+
         # Initialize control variables
         self.control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
 
         self.declare_parameter("controller_rate", self.control_config["nominal"]["frequency"])
         self.controller_rate = self.get_parameter("controller_rate").value
         # Initialize Controller
-        self.controller = None  # This should be defined or linked to the actual control logic.
 
     def start_controller(self):
 
@@ -73,6 +76,23 @@ class NominalController(Node):
         """
         Publishes the prioritized control.
         """
+
+        if self.state is None:
+            if not getattr(self, "_warned_state", False):
+                self.get_logger().warn("Waiting for state (odom) before publishing control…")
+                self._warned_state = True
+            return
+        
+        if self.controller_type == "HJR":
+            prep = getattr(self, "controller_prep", None)
+            tv_vf_ready = (prep is not None) and (getattr(prep, "tv_vf", None) is not None)
+            if (getattr(self, "grid", None) is None) or (not tv_vf_ready):
+                if not getattr(self, "_warned_vf", False):
+                    self.get_logger().warn("Waiting for HJ value function/grid…")
+                    self._warned_vf = True
+                return
+
+
         # Get nominal control
         control = self.controller(self.state, self.get_clock().now().nanoseconds)  # Assuming controller is a callable
         control = control.squeeze()
