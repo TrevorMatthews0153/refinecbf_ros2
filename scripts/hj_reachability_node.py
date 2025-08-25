@@ -7,6 +7,7 @@ import hj_reachability as hj
 import jax.numpy as jnp
 from refinecbf_ros2.msg import ValueFunctionMsg, HiLoArray
 from std_srvs.srv import Trigger
+import tqdm
 
 # Ensure the following imports are compatible with ROS2 or appropriately adapted
 from config import Config, QuadraticCBF, InitialCBF
@@ -58,7 +59,7 @@ class HJReachabilityNode(Node):
         )
 
         self.declare_parameter("vf_update_method", "file")
-        self.declare_parameter("vf_update_accuracy", "high")
+        self.declare_parameter("vf_update_accuracy", "very_high")
         self.declare_parameter("vf_initialization_method", "file")
         self.declare_parameter("initial_vf_file", "None")
         self.declare_parameter("update_vf_online", True)
@@ -83,20 +84,19 @@ class HJReachabilityNode(Node):
         else:
             raise NotImplementedError(f"{self.vf_update_method} is not a valid vf update method")
 
-        # self.brt = lambda sdf_values: lambda t, x: x
-        self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
-
         # Wait while not sdf update topic received
         self.first_message_received = threading.Event()
         self.spin_thread = threading.Thread(target=self.spin)
         self.spin_thread.start()
         self.first_message_received.wait()
 
+        #Test 24August2025
+        # safe_region = lambda x: 5.0 - jnp.linalg.norm(x[:2])
         # self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
-        # self.brt = lambda sdf_values: lambda t, x: x
-        self.solver_settings = hj.SolverSettings.with_accuracy(
-            self.vf_update_accuracy, value_postprocessor=self.brt(self.sdf_values)
-        )
+        # sdf = hj.utils.multivmap(safe_region, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        # self.sdf_values = sdf
+        self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy) #, value_postprocessor=self.brt(self.sdf_values))
+        
         self.vf_initialization_method = self.get_parameter("vf_initialization_method").value
         if self.vf_initialization_method == "sdf":
             self.vf = self.sdf_values.copy()
@@ -104,7 +104,13 @@ class HJReachabilityNode(Node):
             # Here the Quadratic CBF is based on obstacles we instead want to update it to use GP-SDF
             # cbf_params = control_config["initial_cbf"]
             original_cbf = QuadraticCBF(self.dynamics, cbf_params["Parameters"], test=False)
-            # original_cbf = InitialCBF(self.dynamics, cbf_params["Parameters"], test=False)
+
+            #initialize CBF with sdf-gp rather than obstacles
+            # self.vf = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "state_domain")
+            # x_lin = np.linspace()
+            # y_lin = np.linspace()
+            # original_cbf = InitialCBF(self.dynamics, (x_lin, y_lin), sdf_grid, grad_x=grad_x, grad_y=grad_y, test=False)
+
             tabular_cbf = TabularControlAffineCBF(self.dynamics, params={}, test=False, grid=self.grid)
             tabular_cbf.tabularize_cbf(original_cbf)
             self.vf = tabular_cbf.vf_table.copy()
@@ -168,9 +174,7 @@ class HJReachabilityNode(Node):
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:
-            self.solver_settings = hj.SolverSettings.with_accuracy(
-                self.vf_update_accuracy, value_postprocessor=self.brt(self.sdf_values)
-            )
+            self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy)
 
     def callback_sdf_update_file(self, msg):
         self.get_logger().info("SDF update received")
@@ -181,9 +185,7 @@ class HJReachabilityNode(Node):
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:
-            self.solver_settings = hj.SolverSettings.with_accuracy(
-                self.vf_update_accuracy, value_postprocessor=self.brt(self.sdf_values)
-            )
+            self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy)
 
     def update_vf(self):
         """
@@ -191,22 +193,27 @@ class HJReachabilityNode(Node):
         """
         while rclpy.ok():
             if self.update_vf_flag:
-                self.get_logger().info(f"Share of safe cells: {np.sum(self.vf >= 0) / self.vf.size:.3f}", throttle_duration_sec=5.0)
-                new_values = hj.step(
-                    self.solver_settings,
-                    self.hj_dynamics,
-                    self.grid,
-                    0.0,
-                    self.vf,
-                    -0.1,
-                    progress_bar=True,
-                )
-                self.vf = jnp.minimum(self.vf, new_values)
+                time_start = time.time()
+                self.get_logger().info(f"Share of safe cells: {np.sum(self.vf >= 0) / self.vf.size:.3f}")
+                for i in range(1):
+                    new_values = hj.step(
+                        self.solver_settings,
+                        self.hj_dynamics,
+                        self.grid,
+                        0.0,
+                        self.vf,
+                        -0.1,
+                        progress_bar=False,
+                    )
+                self.vf = jnp.minimum(new_values, self.sdf_values)
+                # print(self.vf.shape)
+                # self.vf = new_values
                 if self.vf_update_method == "pubsub":
                     self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
                 else:  # self.vf_update_method == "file"
-                    np.save("/root/vf.npy", self.vf)
+                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/data_files/update_vf.npy", np.array(self.vf))
                     self.vf_pub.publish(Bool(data=True))
+                self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 
 
 def main(args=None):

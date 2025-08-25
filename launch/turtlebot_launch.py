@@ -87,17 +87,17 @@ def generate_launch_description():
                          ],
             remappings=[('robot/final_control', '/cmd_vel')]
         ),
-        Node(
-            package='refinecbf_ros2',
-            executable='tb_visualization.py',
-            output='screen',
-            parameters=[topics_config_path,
-                        {'vf_update_method': LaunchConfiguration('vf_update_method'),
-                         'env_config_file': LaunchConfiguration('env_config_file'),
-                         'control_config_file': LaunchConfiguration('control_config_file'),
-                         }
-                         ],
-        ),
+        # Node(
+        #     package='refinecbf_ros2',
+        #     executable='tb_visualization.py',
+        #     output='screen',
+        #     parameters=[topics_config_path,
+        #                 {'vf_update_method': LaunchConfiguration('vf_update_method'),
+        #                  'env_config_file': LaunchConfiguration('env_config_file'),
+        #                  'control_config_file': LaunchConfiguration('control_config_file'),
+        #                  }
+        #                  ],
+        # ),
         # Include other launch files
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([

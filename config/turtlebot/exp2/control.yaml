@@ -16,10 +16,10 @@ nominal:
 external:
   buffer_time: 1.0  # seconds
   mod_buffer_time: 5.0  # seconds
-limits:
+limits:  # Make sure these are aligned with env.yaml
   max_vel: 0.5
-  min_vel: -0.5
-  max_omega: 0.2
+  min_vel: 1.5
+  max_omega: 2.0
 
 asif:
   gamma: 0.2
