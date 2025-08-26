@@ -94,19 +94,21 @@ class TurtlebotInterface(BaseInterface):
     def process_safe_control(self, control_in_msg):
         control_in = control_in_msg.value
         control_out_msg = self.control_out_msg_type()
-        control_out_msg.linear.x = np.minimum(self.max_vel, np.maximum(self.min_vel, control_in[1]))
+        control_out_msg.linear.x = np.clip(control_in[0], self.min_vel, self.max_vel)
         control_out_msg.linear.y = 0.0
         control_out_msg.linear.z = 0.0
 
         control_out_msg.angular.x = 0.0
         control_out_msg.angular.y = 0.0
-        control_out_msg.angular.z = np.minimum(-self.max_omega, np.maximum(self.max_omega, control_in[0]))
+        control_out_msg.angular.z = np.clip(control_in[1], -self.max_omega, self.max_omega)
+        self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
+
         return control_out_msg
 
     def process_external_control(self, control_in_msg):
         # When nominal control comes through the HW interface, it is a Twist message
         control_out_msg = Array()
-        control_out_msg.value = [control_in_msg.angular.z, control_in_msg.linear.x]
+        control_out_msg.value = [control_in_msg.linear.x, control_in_msg.angular.z]
         new_val = np.array(control_out_msg.value)
         if (self.external_control is None) or (not np.allclose(self.external_control, new_val, atol=1e-1, rtol=1e-1)):
             # If the external control has changed, then reset the external control mod timestamp

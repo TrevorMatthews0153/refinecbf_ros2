@@ -110,6 +110,7 @@ class TurtlebotNominalControl(NominalController):
 
         # --- Goal ---
         self.target = np.array(self.control_config["nominal"]["goal"]["coordinates"])
+        print(self.target)
 
         # --- Controller selection ---
         if self.controller_type == "HJR":
