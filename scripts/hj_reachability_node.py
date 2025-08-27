@@ -181,7 +181,7 @@ class HJReachabilityNode(Node):
         if not msg.data:
             return
         # self.sdf_values = np.array(np.load("sdf.npy")).reshape(self.config.grid_shape)
-        self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "vf"))
+        self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "sdf_turtlebot_world"))
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:

@@ -204,6 +204,7 @@ class SafetyFilterNode(Node):
             safety_control[self.safety_controls_idis] = safety_control_active[0]
             safety_control_msg.value = safety_control.tolist()
 
+
         self.pub_filtered_control.publish(safety_control_msg)
 
     def callback_state(self, state_msg):
