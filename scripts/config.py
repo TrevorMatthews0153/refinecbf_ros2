@@ -6,6 +6,7 @@ from refine_cbfs import HJControlAffineDynamics
 import numpy as np
 import rclpy
 from utils import load_parameters
+from dataclasses import dataclass
 
 
 class Config:
@@ -23,6 +24,7 @@ class Config:
         self.dynamics_class = config["dynamics_class"]
         self.dynamics = self.setup_dynamics()
         self.control_space = config["control_space"]
+        self.dynamics.set_control_space(self.control_space)
         self.disturbance_space = config["disturbance_space"]
         self.safety_states = config["safety_states"]
         self.safety_controls = config["safety_controls"]
@@ -329,6 +331,11 @@ class QuadNearHoverPlanarDynamics(ControlAffineDynamics):
     def disturbance_matrix(self, state, time: float = 0.0):
         return jnp.array([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
+@dataclass
+class ControlSpace:
+    control_dim: int
+    lo: jnp.ndarray
+    hi: jnp.ndarray
 
 class DubinsCarDynamics(ControlAffineDynamics):
     """
@@ -340,13 +347,15 @@ class DubinsCarDynamics(ControlAffineDynamics):
     # DISTURBANCES = ["dx", "dy"]
 
     def open_loop_dynamics(self, state, time: float = 0):
-        return jnp.array([0.0, 0.0, 0.0])
+        return jnp.array([0.0, 0.0, 0.0]) # maybe (vcos(theta), vsin(theta), 0.0) ?
 
     def control_matrix(self, state, time: float = 0.0):
         return jnp.array([[jnp.cos(state[2]), 0.0], [jnp.sin(state[2]), 0.0], [0.0, 1.0]])
 
     # def disturbance_jacobian(self, state, time: float = 0.0):
     #     return jnp.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+    def set_control_space(self, control_space):
+        self.control_space = ControlSpace(control_dim = control_space['n_dims'],lo = jnp.array(control_space['lo']), hi = jnp.array(control_space['hi']))
 
 
 # Defining the dynamics of the quadrotor

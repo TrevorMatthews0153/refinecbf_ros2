@@ -148,7 +148,7 @@ class HJReachabilityNode(Node):
     def publish_initial_vf(self):
         # ROS2 uses a slightly different API for waiting for subscribers
         self.get_logger().info("Number of subscribers: {}".format(self.vf_pub.get_subscription_count()))
-        while self.vf_pub.get_subscription_count() < 0:
+        while self.vf_pub.get_subscription_count() < 0: # was previously 2
             self.get_logger().info("HJR node: Waiting for subscribers to connect")
             time.sleep(1)
         if self.vf_update_method == "pubsub":
@@ -181,7 +181,7 @@ class HJReachabilityNode(Node):
         if not msg.data:
             return
         # self.sdf_values = np.array(np.load("sdf.npy")).reshape(self.config.grid_shape)
-        self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "sdf_turtlebot_world"))
+        self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "vf"))
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:
@@ -205,13 +205,13 @@ class HJReachabilityNode(Node):
                         -0.1,
                         progress_bar=False,
                     )
-                self.vf = jnp.minimum(new_values, self.sdf_values)
+                    self.vf = jnp.minimum(new_values, self.sdf_values)
                 # print(self.vf.shape)
                 # self.vf = new_values
                 if self.vf_update_method == "pubsub":
                     self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
                 else:  # self.vf_update_method == "file"
-                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/data_files/update_vf.npy", np.array(self.vf))
+                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/update_vf.npy", np.array(self.vf))
                     self.vf_pub.publish(Bool(data=True))
                 self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 
