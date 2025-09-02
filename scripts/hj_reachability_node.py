@@ -211,7 +211,7 @@ class HJReachabilityNode(Node):
                 if self.vf_update_method == "pubsub":
                     self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
                 else:  # self.vf_update_method == "file"
-                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/update_vf.npy", np.array(self.vf))
+                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy", np.array(self.vf))
                     self.vf_pub.publish(Bool(data=True))
                 self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 

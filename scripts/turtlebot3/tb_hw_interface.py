@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from template.hw_interface import BaseInterface
 from ament_index_python.packages import get_package_share_directory
 import yaml
-
+import time
 
 
 class TurtlebotInterface(BaseInterface):
@@ -42,7 +42,11 @@ class TurtlebotInterface(BaseInterface):
                 ("buffer_time_mod_external_control", control_config["external"]["mod_buffer_time"]),
                 ("limits.max_vel", control_config["limits"]["max_vel"]),
                 ("limits.min_vel", control_config["limits"]["min_vel"]),
+                ("limits.max_acc", control_config["limits"]["max_acc"]),
+                ("limits.min_acc", control_config["limits"]["min_acc"]),
                 ("limits.max_omega", control_config["limits"]["max_omega"]),
+                ("controller_type", control_config["controller_type"]),
+                ("target", control_config["nominal"]["goal"]["coordinates"]),
             ]
         )
 
@@ -53,9 +57,19 @@ class TurtlebotInterface(BaseInterface):
 
         self.max_vel = self.get_parameter("limits.max_vel").value
         self.min_vel = self.get_parameter("limits.min_vel").value
+        self.max_acc = self.get_parameter("limits.max_acc").value
+        self.min_acc = self.get_parameter("limits.min_acc").value
         self.max_omega = self.get_parameter("limits.max_omega").value
+        self.controller_type = self.get_parameter("controller_type").value
+        self.target = np.array(self.get_parameter("target").value)
         self.is_running = False
         self.init_subscribers()
+
+        self.last_t = time.time() # keep track of previous timestamp for acceleration control
+        self.current_v = 0.0 # keep track of current velocity for acceleration control
+        self.current_x = None
+        self.current_y = None
+        self.current_yaw = None
 
     def handle_high_level_command(self, request, response):
         if request.command == "start":
@@ -82,27 +96,56 @@ class TurtlebotInterface(BaseInterface):
         x = state_in_msg.pose.pose.orientation.x
         y = state_in_msg.pose.pose.orientation.y
         z = state_in_msg.pose.pose.orientation.z
+        v = state_in_msg.twist.twist.linear.x
 
         # Convert Quaternion to Yaw
         yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (np.power(y, 2) + np.power(z, 2))) + np.pi / 2 # FIXME: why is this necessary? I think it has something to do with the odom and rviz coordinate frames
         yaw = np.arctan2(np.sin(yaw),np.cos(yaw)) # Remap yaw to -pi to pi range
 
+        self.current_x = state_in_msg.pose.pose.position.x
+        self.current_y = state_in_msg.pose.pose.position.y
+        self.current_yaw = yaw
+        self.current_v = v
         state_out_msg = Array()
-        state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw]
+        state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw, v]
         self.state_pub.publish(state_out_msg)
 
     def process_safe_control(self, control_in_msg):
-        control_in = control_in_msg.value
-        control_out_msg = self.control_out_msg_type()
-        control_out_msg.linear.x = np.clip(control_in[0], self.min_vel, self.max_vel)
-        control_out_msg.linear.y = 0.0
-        control_out_msg.linear.z = 0.0
+        if self.controller_type =="PD_acc":
+            #compute velocity control from acceleration control
+            t = time.time()
+            dt = t - self.last_t
+            control_in = control_in_msg.value
+            v_next = self.current_v + control_in[0] * dt
+
+            control_out_msg = self.control_out_msg_type()
+            control_out_msg.linear.x = np.clip(v_next, self.min_vel, self.max_vel)
+            control_out_msg.linear.y = 0.0
+            control_out_msg.linear.z = 0.0
+        else:
+            control_in = control_in_msg.value
+            control_out_msg = self.control_out_msg_type()
+            control_out_msg.linear.x = np.clip(control_in[0], self.min_vel, self.max_vel)
+            control_out_msg.linear.y = 0.0
+            control_out_msg.linear.z = 0.0
 
         control_out_msg.angular.x = 0.0
         control_out_msg.angular.y = 0.0
         control_out_msg.angular.z = np.clip(control_in[1], -self.max_omega, self.max_omega)
-        self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
+        # self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
 
+        # Stope at the goal
+        print(self.current_x, self.current_y, self.current_yaw)
+        if self.current_x is not None and self.current_y is not None:
+            dist_to_goal = np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2])
+            if dist_to_goal < 0.05:
+                control_out_msg.linear.x = 0.0
+                delta_theta = self.target[2] - self.current_yaw
+                if delta_theta < 0.05:
+                    control_out_msg.angular.z = 0.0
+                    self.get_logger().info("Reached Goal")
+
+        # self.get_logger().info(f"Control linear: {control_out_msg.linear.x}, Control angular: {control_out_msg.angular.z}")
         return control_out_msg
 
     def process_external_control(self, control_in_msg):

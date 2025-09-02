@@ -102,8 +102,8 @@ class SafetyFilterNode(Node):
         self.nominal_time_period = 1.0 / self.nominal_frequency
         self.get_logger().info(f"Using gamma: {gamma}, slackify: {slackify_safety_constraint}")
         alpha = lambda x: gamma * x
-        self.hj_model = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape))
-        self.hj_model_back = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape))
+        self.hj_model = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape)) # Updated from None
+        self.hj_model_back = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape)) # Updated from None
         self.get_logger().info(f"control space: {self.dynamics.control_space}")
         self.active_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())
         self.back_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())
@@ -111,7 +111,7 @@ class SafetyFilterNode(Node):
 
         backup_control = ControlAffineSafetyFilter(self.active_buffer_cbf, alpha=alpha,
                                                    weighting=weighting,
-                                                #    constrain_controls=False,
+                                                #    constrain_controls=False, Commented as CASiF doesn't have this argument
                                                    return_values=True,
                                                    logger=self.get_logger())
         self.safety_filter_solver = ControlAffineSafetyFilter(
@@ -152,12 +152,12 @@ class SafetyFilterNode(Node):
         if not vf_msg.data:
             return
         try:
-            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/update_vf.npy").reshape(self.config.grid_shape)
+            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy").reshape(self.config.grid_shape)
         except (ValueError, EOFError):
             import time
             time.sleep(0.03)
             try:
-                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/update_vf.npy").reshape(self.config.grid_shape)
+                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy").reshape(self.config.grid_shape)
             except EOFError:
                 self.get_logger().warn("Value function file not found, skipping update")
                 return

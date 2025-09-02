@@ -96,7 +96,7 @@ class NominalController(Node):
         # Get nominal control
         control = self.controller(self.state, self.get_clock().now().nanoseconds)  # Assuming controller is a callable
         control = control.squeeze()
-        self.get_logger().info(f"Control: {list(control)}")
+        # self.get_logger().info(f"Control: {list(control)}")
 
         # Create control message
         control_msg = Array()

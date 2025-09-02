@@ -11,6 +11,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__)))
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from hjr_nominal_control import NominalControlHJ
 from pd_nominal_control import NominalControlPD
+from pd_acc_nominal_control import NominalControlPDAcc
 from refinecbf_ros2.srv import HighLevelCommand
 from nominal_controller import NominalController
 from config import Config
@@ -102,11 +103,19 @@ class TurtlebotNominalControl(NominalController):
         self.controller_type = self.get_parameter("controller_type").value
 
         # --- Limits ---
-        self.max_vel = self.control_config["limits"]["max_vel"]
-        self.min_vel = self.control_config["limits"]["min_vel"]
-        self.max_omega = self.control_config["limits"]["max_omega"]
-        umin = np.array([self.min_vel, -self.max_omega])
-        umax = np.array([self.max_vel, self.max_omega])
+        if self.controller_type == "PD_acc":
+            self.max_acc = self.control_config["limits"]["max_acc"]
+            self.min_acc = self.control_config["limits"]["min_acc"]
+            self.max_omega = self.control_config["limits"]["max_omega"]
+            umin = np.array([self.min_acc, -self.max_omega])
+            umax = np.array([self.max_acc, self.max_omega])
+        else:
+            self.max_vel = self.control_config["limits"]["max_vel"]
+            self.min_vel = self.control_config["limits"]["min_vel"]
+            self.max_omega = self.control_config["limits"]["max_omega"]
+            umin = np.array([self.min_vel, -self.max_omega])
+            umax = np.array([self.max_vel, self.max_omega])
+
 
         # --- Goal ---
         self.target = np.array(self.control_config["nominal"]["goal"]["coordinates"])
@@ -139,6 +148,9 @@ class TurtlebotNominalControl(NominalController):
 
         elif self.controller_type == "PD":
             self.controller = NominalControlPD(target=self.target, umin=umin, umax=umax).get_nominal_control
+
+        elif self.controller_type == "PD_acc":
+            self.controller = NominalControlPDAcc(target=self.target, umin=umin, umax=umax).get_nominal_control
 
         else:
             raise NotImplementedError(f"{self.controller_type} is not a valid controller type")

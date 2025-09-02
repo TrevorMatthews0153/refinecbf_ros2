@@ -125,6 +125,8 @@ class Config:
             return QuadNearHoverPlanarDynamics(params={"g": 9.81}, dt=0.05, test=False)
         elif self.dynamics_class == "dubins_car":
             return DubinsCarDynamics(params={"g": 9.81}, dt=0.05, test=False)
+        elif self.dynamics_class == "dubins_acceleration":
+            return DubinsAccelerationDynamics(params={"g": 9.81}, dt=0.05, test=False)
         else:
             raise ValueError(
                 "Invalid dynamics type: {}".format(self.dynamics_class))
@@ -137,6 +139,136 @@ class Config:
         return hj.Grid.from_lattice_parameters_and_boundary_conditions(
             bounding_box, grid_resolution, periodic_dims=p_dims
         )
+
+
+# Dynamics Classes
+class QuadNearHoverPlanarDynamics(ControlAffineDynamics):
+    """
+    Simplified dynamics, and we need to convert controls from phi to tan(phi)"""
+
+    STATES = ["y", "z", "v_y", "v_z"]
+    CONTROLS = ["tan(phi)", "T"]
+    DISTURBANCES = ["dy", "dvy"]
+
+    def open_loop_dynamics(self, state, time: float = 0.0):
+        return jnp.array([state[2], state[3], 0.0, -self.params["g"]])
+
+    def control_matrix(self, state, time: float = 0.0):
+        return jnp.array([[0.0, 0.0], [0.0, 0.0], [-self.params["g"], 0.0], [0.0, 1.0]])
+
+    def disturbance_matrix(self, state, time: float = 0.0):
+        return jnp.array([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+
+@dataclass
+class ControlSpace:
+    control_dim: int
+    lo: jnp.ndarray
+    hi: jnp.ndarray
+
+class DubinsCarDynamics(ControlAffineDynamics):
+    """
+    Dubins Car Dynamics for the Turtlebot
+    """
+
+    STATES = ["x", "y", "theta"]
+    CONTROLS = ["v", "omega"]
+    # DISTURBANCES = ["dx", "dy"]
+
+    def open_loop_dynamics(self, state, time: float = 0):
+        return jnp.array([0.0, 0.0, 0.0]) # maybe (vcos(theta), vsin(theta), 0.0) ?
+
+    def control_matrix(self, state, time: float = 0.0):
+        return jnp.array([[jnp.cos(state[2]), 0.0], [jnp.sin(state[2]), 0.0], [0.0, 1.0]])
+
+    # def disturbance_jacobian(self, state, time: float = 0.0):
+    #     return jnp.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+    def set_control_space(self, control_space):
+        self.control_space = ControlSpace(control_dim = control_space['n_dims'],lo = jnp.array(control_space['lo']), hi = jnp.array(control_space['hi']))
+
+class DubinsAccelerationDynamics(ControlAffineDynamics):
+    """
+    Dubins Car Dynamics w/ Acceleration
+    """
+
+    STATES = ["x", "y", "theta", "v"]
+    CONTROLS = ["a", "omega"]
+
+    def open_loop_dynamics(self, state, time: float = 0):
+        return jnp.array([state[3]*jnp.cos(state[2]),state[3]*jnp.sin(state[2]), 0.0, 0.0]) # maybe (vcos(theta), vsin(theta), 0.0) ?
+
+    def control_matrix(self, state, time: float = 0.0):
+        return jnp.array([[0.0, 0.0],
+                         [0.0, 0.0],
+                         [0.0, 1.0],
+                         [1.0, 0.0]])
+
+    def set_control_space(self, control_space):
+        self.control_space = ControlSpace(control_dim = control_space['n_dims'],lo = jnp.array(control_space['lo']), hi = jnp.array(control_space['hi']))
+
+
+# Defining the dynamics of the quadrotor
+class CrazyflieDynamics(ControlAffineDynamics):
+    """
+    Simplified dynamics, and we need to convert controls from phi to tan(phi)"""
+
+    STATES = ["y", "z", "v_y", "v_z"]
+    CONTROLS = ["tan(phi)", "T"]
+    DISTURBANCES = []
+
+    def __init__(self, params, test=True, **kwargs):
+        super().__init__(params, test, **kwargs)
+
+    def open_loop_dynamics(self, state, time: float = 0.0):
+        return jnp.array([state[2], state[3], 0.0, -self.params["g"]])
+
+    def control_matrix(self, state, time: float = 0.0):
+        return jnp.array([[0.0, 0.0], [0.0, 0.0], [self.params["g"], 0.0], [0.0, 1.0]])
+
+    def state_jacobian(self, state, control, disturbance=None, time: float = 0.0):
+        return jax.jacfwd(lambda x: self.__call__(x, control, disturbance, time))(state)
+
+
+# Implementing creating CBF
+class QuadraticCBF(ControlAffineCBF):
+    def __init__(self, dynamics, params, test=False, **kwargs):
+        self.scaling = params["scaling"]
+        self.center = params["center"]
+        self.offset = params["offset"]
+        self._vf_grad = jax.vmap(
+            jax.grad(self.vf, argnums=0), in_axes=(0, None))
+        super().__init__(dynamics, params=params, test=False, **kwargs)
+
+    def vf(self, state, time=0.0):
+        val = self.offset - \
+            jnp.sum(np.array(self.scaling) *
+                    (state - np.array(self.center)) ** 2, axis=-1)
+        return val
+
+    def _grad_vf(self, state, time=0.0):
+        return self._vf_grad(state, time)
+
+class InitialCBF(ControlAffineCBF):
+    def __init__(self, dynamics, grid_axes, psi_values, grad_x=None, grad_y=None, **kwargs):
+        self.psi_interp = RegularGridInterpolator(grid_axes, psi_values, bounds_error=False, fill_value=None)
+        self.grad_x_interp = (
+            RegularGridInterpolator(grid_axes, grad_x, bounds_error=False, fill_value=None) if grad_x is not None else None
+        )
+        self.grad_y_interp = (
+            RegularGridInterpolator(grid_axes, grad_y, bounds_error=False, fill_value=None) if grad_y is not None else None
+        )
+        super().__init__(dynamics, {}, **kwargs)
+
+    def vf(self, state, time=0.0):
+        query = np.atleast_2d(state)[..., :2]
+        return self.psi_interp(query)
+    
+    def _grad_vf(self, state, time=0.0):
+        state = np.atleast_2d(state)       # ensure (1,3)
+        query = state[..., :2]
+        grad = np.zeros((state.shape[0], 3))  # ensure (1,3)
+        grad[:, 0] = self.grad_x_interp(query)
+        grad[:, 1] = self.grad_y_interp(query)
+        return grad
 
 
 # Obstacle Classes
@@ -312,112 +444,3 @@ class Boundary(Obstacle):
         )
         return obstacle_sdf
 
-
-# Dynamics Classes
-class QuadNearHoverPlanarDynamics(ControlAffineDynamics):
-    """
-    Simplified dynamics, and we need to convert controls from phi to tan(phi)"""
-
-    STATES = ["y", "z", "v_y", "v_z"]
-    CONTROLS = ["tan(phi)", "T"]
-    DISTURBANCES = ["dy", "dvy"]
-
-    def open_loop_dynamics(self, state, time: float = 0.0):
-        return jnp.array([state[2], state[3], 0.0, -self.params["g"]])
-
-    def control_matrix(self, state, time: float = 0.0):
-        return jnp.array([[0.0, 0.0], [0.0, 0.0], [-self.params["g"], 0.0], [0.0, 1.0]])
-
-    def disturbance_matrix(self, state, time: float = 0.0):
-        return jnp.array([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
-
-@dataclass
-class ControlSpace:
-    control_dim: int
-    lo: jnp.ndarray
-    hi: jnp.ndarray
-
-class DubinsCarDynamics(ControlAffineDynamics):
-    """
-    Dubins Car Dynamics for the Turtlebot
-    """
-
-    STATES = ["x", "y", "theta"]
-    CONTROLS = ["v", "omega"]
-    # DISTURBANCES = ["dx", "dy"]
-
-    def open_loop_dynamics(self, state, time: float = 0):
-        return jnp.array([0.0, 0.0, 0.0]) # maybe (vcos(theta), vsin(theta), 0.0) ?
-
-    def control_matrix(self, state, time: float = 0.0):
-        return jnp.array([[jnp.cos(state[2]), 0.0], [jnp.sin(state[2]), 0.0], [0.0, 1.0]])
-
-    # def disturbance_jacobian(self, state, time: float = 0.0):
-    #     return jnp.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
-    def set_control_space(self, control_space):
-        self.control_space = ControlSpace(control_dim = control_space['n_dims'],lo = jnp.array(control_space['lo']), hi = jnp.array(control_space['hi']))
-
-
-# Defining the dynamics of the quadrotor
-class CrazyflieDynamics(ControlAffineDynamics):
-    """
-    Simplified dynamics, and we need to convert controls from phi to tan(phi)"""
-
-    STATES = ["y", "z", "v_y", "v_z"]
-    CONTROLS = ["tan(phi)", "T"]
-    DISTURBANCES = []
-
-    def __init__(self, params, test=True, **kwargs):
-        super().__init__(params, test, **kwargs)
-
-    def open_loop_dynamics(self, state, time: float = 0.0):
-        return jnp.array([state[2], state[3], 0.0, -self.params["g"]])
-
-    def control_matrix(self, state, time: float = 0.0):
-        return jnp.array([[0.0, 0.0], [0.0, 0.0], [self.params["g"], 0.0], [0.0, 1.0]])
-
-    def state_jacobian(self, state, control, disturbance=None, time: float = 0.0):
-        return jax.jacfwd(lambda x: self.__call__(x, control, disturbance, time))(state)
-
-
-# Implementing creating CBF
-class QuadraticCBF(ControlAffineCBF):
-    def __init__(self, dynamics, params, test=False, **kwargs):
-        self.scaling = params["scaling"]
-        self.center = params["center"]
-        self.offset = params["offset"]
-        self._vf_grad = jax.vmap(
-            jax.grad(self.vf, argnums=0), in_axes=(0, None))
-        super().__init__(dynamics, params=params, test=False, **kwargs)
-
-    def vf(self, state, time=0.0):
-        val = self.offset - \
-            jnp.sum(np.array(self.scaling) *
-                    (state - np.array(self.center)) ** 2, axis=-1)
-        return val
-
-    def _grad_vf(self, state, time=0.0):
-        return self._vf_grad(state, time)
-
-class InitialCBF(ControlAffineCBF):
-    def __init__(self, dynamics, grid_axes, psi_values, grad_x=None, grad_y=None, **kwargs):
-        self.psi_interp = RegularGridInterpolator(grid_axes, psi_values, bounds_error=False, fill_value=None)
-        self.grad_x_interp = (
-            RegularGridInterpolator(grid_axes, grad_x, bounds_error=False, fill_value=None) if grad_x is not None else None
-        )
-        self.grad_y_interp = (
-            RegularGridInterpolator(grid_axes, grad_y, bounds_error=False, fill_value=None) if grad_y is not None else None
-        )
-        super().__init__(dynamics, {}, **kwargs)
-
-    def vf(self, state, time=0.0):
-        query = np.atleast_2d(state)[..., :2]
-        return self.psi_interp(query)
-    
-    def _grad_vf(self, state, time=0.0):
-        state = np.atleast_2d(state)       # ensure (1,3)
-        query = state[..., :2]
-        grad = np.zeros((state.shape[0], 3))  # ensure (1,3)
-        grad[:, 0] = self.grad_x_interp(query)
-        grad[:, 1] = self.grad_y_interp(query)
-        return grad

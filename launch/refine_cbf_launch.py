@@ -35,7 +35,7 @@ def generate_launch_description():
             description='Robot name'),
         DeclareLaunchArgument(
             'exp',
-            default_value="2",
+            default_value="3",
             description='Which experiment to run'),
         DeclareLaunchArgument(
             'use_sim_time', 
@@ -44,7 +44,7 @@ def generate_launch_description():
 
         Node(
             package='refinecbf_ros2',
-            executable='refine_cbf_node.py',
+            executable='refine_cbf_node_cbfoptkit.py',
             name='safety_filter_node',
             output='screen',
             parameters=[
