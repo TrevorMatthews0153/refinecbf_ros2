@@ -3,8 +3,8 @@ nominal:
   goal: #update later
     coordinates:
       - 1.0
-      - 3.0
-      - -1.57
+      - 0.5
+      - 0.0
     padding:
       - 0.05
       - 0.05

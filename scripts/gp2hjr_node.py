@@ -166,15 +166,15 @@ class SDFPointCloudToGridNode(Node):
         super().__init__("sdf_pointcloud_to_grid")
 
         # --- Parameters
-        self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/env.yaml")
-        self.declare_parameter("mode", "pubsub")  # "pubsub" or "file"
+        self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/env.yaml")
+        self.declare_parameter("mode", "file")  # "pubsub" or "file"
         self.declare_parameter("output_topic", "/env/sdf_update")
         self.declare_parameter("output_topic_grad_x", "/env/sdf_grad_x_update")
         self.declare_parameter("output_topic_grad_y", "/env/sdf_grad_y_update")
         self.declare_parameter("grid_info_topic", "topics/sdf_grid_info")
-        self.declare_parameter("sdf_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/curr_sdf.npy")
-        self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/curr_grad_x.npy")
-        self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp2/curr_grad_y.npy")
+        self.declare_parameter("sdf_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_sdf.npy")
+        self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_grad_x.npy")
+        self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_grad_y.npy")
         self.declare_parameter("fill_missing", True)
 
         # --- Save Paths

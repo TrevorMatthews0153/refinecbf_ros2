@@ -76,27 +76,6 @@ class TurtlebotNominalControl(NominalController):
         super().__init__("tb_nominal_control")
 
         # --- Load config files from ROS parameters ---
-        self.declare_parameter("control_config_file", "")
-        self.declare_parameter("env_config_file", "")
-
-        control_config_path = self.get_parameter("control_config_file").get_parameter_value().string_value
-        env_config_path = self.get_parameter("env_config_file").get_parameter_value().string_value
-
-        # Load control config
-        if control_config_path and os.path.exists(control_config_path):
-            with open(control_config_path, "r") as f:
-                self.control_config = yaml.safe_load(f)
-        else:
-            self.get_logger().error(f"control_config_file not found: {control_config_path}")
-            self.control_config = {}
-
-        # Load env config
-        if env_config_path and os.path.exists(env_config_path):
-            with open(env_config_path, "r") as f:
-                self.env_config = yaml.safe_load(f)
-        else:
-            self.get_logger().error(f"env_config_file not found: {env_config_path}")
-            self.env_config = {}
 
         # --- Now we can declare parameters that depend on the configs ---
         self.declare_parameter("controller_type", self.control_config.get("controller_type", "PD"))

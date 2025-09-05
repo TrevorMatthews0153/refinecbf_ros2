@@ -26,6 +26,7 @@ class Config:
         self.control_space = config["control_space"]
         self.dynamics.set_control_space(self.control_space)
         self.disturbance_space = config["disturbance_space"]
+        self.dynamics.set_disturbance_space(self.disturbance_space)
         self.safety_states = config["safety_states"]
         self.safety_controls = config["safety_controls"]
         self.state_domain = config["state_domain"]
@@ -192,6 +193,7 @@ class DubinsAccelerationDynamics(ControlAffineDynamics):
 
     STATES = ["x", "y", "theta", "v"]
     CONTROLS = ["a", "omega"]
+    DISTURBANCES = ["dx", "dy"]
 
     def open_loop_dynamics(self, state, time: float = 0):
         return jnp.array([state[3]*jnp.cos(state[2]),state[3]*jnp.sin(state[2]), 0.0, 0.0]) # maybe (vcos(theta), vsin(theta), 0.0) ?
@@ -204,6 +206,12 @@ class DubinsAccelerationDynamics(ControlAffineDynamics):
 
     def set_control_space(self, control_space):
         self.control_space = ControlSpace(control_dim = control_space['n_dims'],lo = jnp.array(control_space['lo']), hi = jnp.array(control_space['hi']))
+
+    def disturbance_matrix(self, state, time: float = 0.0):
+        return jnp.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]])
+
+    def set_disturbance_space(self, disturbance_space):
+        self.disturbance_space = ControlSpace(control_dim = disturbance_space['n_dims'],lo = jnp.array(disturbance_space['lo']), hi = jnp.array(disturbance_space['hi']))
 
 
 # Defining the dynamics of the quadrotor

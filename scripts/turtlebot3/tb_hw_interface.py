@@ -15,6 +15,8 @@ from template.hw_interface import BaseInterface
 from ament_index_python.packages import get_package_share_directory
 import yaml
 import time
+from utils import load_parameters
+import rowan
 
 
 class TurtlebotInterface(BaseInterface):
@@ -30,10 +32,7 @@ class TurtlebotInterface(BaseInterface):
 
     def __init__(self):
         super().__init__("turtlebot_interface")
-        self.declare_parameter("control_config_file", rclpy.Parameter.Type.STRING)
-        control_config_file = self.get_parameter("control_config_file").value
-        with open(os.path.join(get_package_share_directory("refinecbf_ros2"), control_config_file)) as f:
-            control_config = yaml.safe_load(f)
+        control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
 
         self.declare_parameters(
             "",
@@ -99,9 +98,11 @@ class TurtlebotInterface(BaseInterface):
         v = state_in_msg.twist.twist.linear.x
 
         # Convert Quaternion to Yaw
-        yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (np.power(y, 2) + np.power(z, 2))) + np.pi / 2 # FIXME: why is this necessary? I think it has something to do with the odom and rviz coordinate frames
-        yaw = np.arctan2(np.sin(yaw),np.cos(yaw)) # Remap yaw to -pi to pi range
-
+        # yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (np.power(y, 2) + np.power(z, 2))) + np.pi / 2 # FIXME: why is this necessary? I think it has something to do with the odom and rviz coordinate frames
+        # yaw = np.arctan2(np.sin(yaw),np.cos(yaw)) # Remap yaw to -pi to pi range
+        euler = rowan.to_euler([x, y, z, w])
+        # self.get_logger().info("Yaw: {:.2f}".format(euler[2]))
+        yaw = euler[2]
         self.current_x = state_in_msg.pose.pose.position.x
         self.current_y = state_in_msg.pose.pose.position.y
         self.current_yaw = yaw
@@ -117,9 +118,9 @@ class TurtlebotInterface(BaseInterface):
             dt = t - self.last_t
             control_in = control_in_msg.value
             v_next = self.current_v + control_in[0] * dt
-
+            # v_next = np.clip(v_next, 0.0, 0.05)
             control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = np.clip(v_next, self.min_vel, self.max_vel)
+            control_out_msg.linear.x = np.clip(v_next, 0.0, self.max_vel)  # FIXME: Ideally self.min_vel
             control_out_msg.linear.y = 0.0
             control_out_msg.linear.z = 0.0
         else:
@@ -135,15 +136,17 @@ class TurtlebotInterface(BaseInterface):
         # self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
 
         # Stope at the goal
-        print(self.current_x, self.current_y, self.current_yaw)
+        # print(self.current_x, self.current_y, self.current_yaw)
         if self.current_x is not None and self.current_y is not None:
             dist_to_goal = np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2])
             if dist_to_goal < 0.05:
                 control_out_msg.linear.x = 0.0
-                delta_theta = self.target[2] - self.current_yaw
-                if delta_theta < 0.05:
-                    control_out_msg.angular.z = 0.0
-                    self.get_logger().info("Reached Goal")
+                control_out_msg.angular.z = 0.0
+                self.get_logger().info("Reached Goal")
+                # delta_theta = self.target[2] - self.current_yaw
+                # if delta_theta < 0.05:
+                #     control_out_msg.angular.z = 0.0
+                #     self.get_logger().info("Reached Goal")
 
         # self.get_logger().info(f"Control linear: {control_out_msg.linear.x}, Control angular: {control_out_msg.angular.z}")
         return control_out_msg

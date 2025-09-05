@@ -24,6 +24,7 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/obstacle_node.py
+  scripts/refine_cbf_node_cbfoptkit.py
   scripts/refine_cbf_node.py
   scripts/hj_reachability_node.py
   scripts/template/nominal_controller.py

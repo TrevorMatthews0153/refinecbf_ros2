@@ -44,6 +44,7 @@ class NominalController(Node):
 
         # Initialize control variables
         self.control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
+        self.env_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "env")
 
         self.declare_parameter("controller_rate", self.control_config["nominal"]["frequency"])
         self.controller_rate = self.get_parameter("controller_rate").value

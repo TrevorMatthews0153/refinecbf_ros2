@@ -101,9 +101,9 @@ class SafetyFilterNode(Node):
         self.nominal_frequency = self.get_parameter("control.nominal.frequency").value
         self.nominal_time_period = 1.0 / self.nominal_frequency
         self.get_logger().info(f"Using gamma: {gamma}, slackify: {slackify_safety_constraint}")
-        alpha = lambda x: gamma * x
-        self.hj_model = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape)) # Updated from None
-        self.hj_model_back = HJModel(grid=self.grid, grid_values=jnp.zeros(self.config.grid_shape)) # Updated from None
+        alpha = lambda x: 0.2 * x
+        self.hj_model = HJModel(grid=self.grid, grid_values=None) # Updated from None
+        self.hj_model_back = HJModel(grid=self.grid, grid_values=None) # Updated from None
         self.get_logger().info(f"control space: {self.dynamics.control_space}")
         self.active_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())
         self.back_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())
@@ -111,7 +111,7 @@ class SafetyFilterNode(Node):
 
         backup_control = ControlAffineSafetyFilter(self.active_buffer_cbf, alpha=alpha,
                                                    weighting=weighting,
-                                                #    constrain_controls=False, Commented as CASiF doesn't have this argument
+                                                   constrain_controls=False,
                                                    return_values=True,
                                                    logger=self.get_logger())
         self.safety_filter_solver = ControlAffineSafetyFilter(
@@ -152,12 +152,14 @@ class SafetyFilterNode(Node):
         if not vf_msg.data:
             return
         try:
-            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy").reshape(self.config.grid_shape)
+            # prev update_vf.npy
+            self.back_buffer_cbf.vf_table = np.load("vf.npy").reshape(self.config.grid_shape)
         except (ValueError, EOFError):
             import time
             time.sleep(0.03)
             try:
-                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy").reshape(self.config.grid_shape)
+                # prev update_vf.npy
+                self.back_buffer_cbf.vf_table = np.load("vf.npy").reshape(self.config.grid_shape)
             except EOFError:
                 self.get_logger().warn("Value function file not found, skipping update")
                 return
@@ -234,19 +236,23 @@ class SafetyFilterNode(Node):
             safety_control_msg.value = safety_control.tolist()
             self.get_logger().info("Safety filter not initialized yet, outputting zero control", throttle_duration_sec=2.0)
         else:
+
             nom_control_active = nom_control[self.safety_controls_idis]
+            self.get_logger().info(f"Nominal control: {nom_control_active}")
             safety_control_msg = Array()
             curr_state = self.state.copy()
             safety_filter_tuple = self.safety_filter_solver(
                 curr_state, time=0.0,nominal_control=np.array(nom_control_active)
             )
-
+            self.get_logger().info(f"Value function {safety_filter_tuple[3]}")
             if len(safety_filter_tuple) == 4 and self.safety_filter_active:
                 self.value_function_pub.publish(Float32(data=safety_filter_tuple[3]))
                 self.state_associated_with_vf_pub.publish(Array(value=curr_state.tolist()))
                 self.control_associated_with_vf_pub.publish(Array(value=safety_filter_tuple[0].tolist()))
                 self.nominal_control_associated_with_vf_pub.publish(Array(value=nom_control_active.tolist()))
             safety_control = nom_control.copy()
+
+            self.get_logger().info(f"Safety control: {safety_filter_tuple[0]}")
             safety_control[self.safety_controls_idis] = np.array(safety_filter_tuple[0])
             safety_control_msg.value = safety_control.tolist()
 

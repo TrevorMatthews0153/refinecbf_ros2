@@ -5,14 +5,15 @@ from launch import LaunchDescription, LaunchContext
 from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 from launch.actions import DeclareLaunchArgument, GroupAction
+from launch.conditions import LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution, TextSubstitution
+from launch.substitutions import PathJoinSubstitution, PythonExpression
 import yaml
 
 package_name = 'refinecbf_ros2'
-
+robot = 'turtlebot'
 
 def load_yaml(file_path):
     with open(file_path, 'r') as file:
@@ -45,22 +46,26 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'vf_update_accuracy', default_value='high',
             description='Accuracy of HJ Reachability computation'),
+        # DeclareLaunchArgument(
+        #     'env_config_file', default_value='env.yaml',
+        #     description='Environment config file'),
+        # DeclareLaunchArgument(
+        #     'control_config_file', default_value='control.yaml',
+        #     description='Control config file'),
+        # DeclareLaunchArgument(
+        #     'CBF_parameter_file', default_value='turtlebot_CBF_params.yaml',
+        #     description='CBF parameter file'),
         DeclareLaunchArgument(
-            'env_config_file', default_value='env.yaml',
-            description='Environment config file'),
-        DeclareLaunchArgument(
-            'control_config_file', default_value='control.yaml',
-            description='Control config file'),
-        DeclareLaunchArgument(
-            'CBF_parameter_file', default_value='turtlebot_CBF_params.yaml',
-            description='CBF parameter file'),
-        DeclareLaunchArgument(
-            'initial_vf_file', default_value='vf.npy',
-            description='Initial VF file'),
-        DeclareLaunchArgument(
-            'use_sim_time',
-            default_value='true',
-            description='Use simulation (Gazebo) clock if true'),
+            'exp', default_value='1',
+            description='Which experiment to run'),
+
+        # DeclareLaunchArgument(
+        #     'initial_vf_file', default_value='vf.npy',
+        #     description='Initial VF file'),
+        # DeclareLaunchArgument(
+        #     'use_sim_time',
+        #     default_value='true',
+        #     description='Use simulation (Gazebo) clock if true'),
         Node(
             package='refinecbf_ros2',
             executable='tb_nominal_controller.py',
@@ -68,10 +73,10 @@ def generate_launch_description():
             output='screen',
             parameters=[topics_config_path,
                         tb_topics_config_path,
-                        '/root/ros2_ws/src/refinecbf_ros2/config/tb.yaml',
-                        {'env_config_file': LaunchConfiguration('env_config_file'),
-                         'control_config_file': LaunchConfiguration('control_config_file'),
-                         }
+                        {'robot': robot,
+                         'exp': LaunchConfiguration('exp'),
+                         'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
+                         },
                          ],
         ),
         Node(
@@ -81,10 +86,12 @@ def generate_launch_description():
             output='screen',
             parameters=[topics_config_path,
                         tb_topics_config_path,
-                        {'env_config_file': LaunchConfiguration('env_config_file'),
-                         'control_config_file': LaunchConfiguration('control_config_file'),
-                         }
-                         ],
+                        {'robot': robot,
+                         'exp': LaunchConfiguration('exp'),
+                         'backend': LaunchConfiguration('backend'),
+                         'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
+                        },
+                        ],
             remappings=[('robot/final_control', '/cmd_vel')]
         ),
         # Node(
@@ -108,17 +115,15 @@ def generate_launch_description():
                 ])
             ]),
             launch_arguments={
-                'topics_config_path': topics_config_path,
-                'env_config_file': LaunchConfiguration('env_config_file'),
-                'control_config_file': LaunchConfiguration('control_config_file'),
+                topics_config_path: topics_config_path,
+                'robot': robot,
+                'exp': LaunchConfiguration('exp'),
                 'safety_filter_active': LaunchConfiguration('safety_filter_active'),
                 'update_vf_online': LaunchConfiguration('update_vf_online'),
                 'vf_initialization_method': LaunchConfiguration('vf_initialization_method'),
                 'vf_update_method': LaunchConfiguration('vf_update_method'),
                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
-                'CBF_parameter_file': LaunchConfiguration('CBF_parameter_file'),
-                'initial_vf_file': LaunchConfiguration('initial_vf_file'),
-                'use_sim_time' : LaunchConfiguration('use_sim_time')
+                'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
             }.items()
         ),
         # GroupAction(

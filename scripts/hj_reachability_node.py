@@ -60,7 +60,7 @@ class HJReachabilityNode(Node):
 
         self.declare_parameter("vf_update_method", "file")
         self.declare_parameter("vf_update_accuracy", "very_high")
-        self.declare_parameter("vf_initialization_method", "file")
+        self.declare_parameter("vf_initialization_method", "sdf")
         self.declare_parameter("initial_vf_file", "None")
         self.declare_parameter("update_vf_online", True)
         self.service_to_start = False
@@ -84,17 +84,18 @@ class HJReachabilityNode(Node):
         else:
             raise NotImplementedError(f"{self.vf_update_method} is not a valid vf update method")
 
-        # Wait while not sdf update topic received
-        self.first_message_received = threading.Event()
-        self.spin_thread = threading.Thread(target=self.spin)
-        self.spin_thread.start()
-        self.first_message_received.wait()
+        # Wait while not sdf update topic received  # FIXME TM MK: blocking right now, not when using SDF
+        # self.first_message_received = threading.Event()
+        # self.spin_thread = threading.Thread(target=self.spin)
+        # self.spin_thread.start()
+        # self.first_message_received.wait()
 
         #Test 24August2025
-        # safe_region = lambda x: 5.0 - jnp.linalg.norm(x[:2])
-        # self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
-        # sdf = hj.utils.multivmap(safe_region, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
-        # self.sdf_values = sdf
+        safe_region = lambda x: -1 * (0.25**0.5 - jnp.linalg.norm(x[:2]))
+        self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
+        sdf = hj.utils.multivmap(safe_region, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        self.sdf_values = sdf
+        print(self.sdf_values.shape)
         self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy) #, value_postprocessor=self.brt(self.sdf_values))
         
         self.vf_initialization_method = self.get_parameter("vf_initialization_method").value
@@ -115,7 +116,7 @@ class HJReachabilityNode(Node):
             tabular_cbf.tabularize_cbf(original_cbf)
             self.vf = tabular_cbf.vf_table.copy()
         elif self.vf_initialization_method == "file":
-            self.vf = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "vf")
+            self.vf = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "cbf_vfs")
             if self.vf.ndim == self.grid.ndim + 1:
                 self.vf = self.vf[-1]
             print("File Loaded")
@@ -148,7 +149,7 @@ class HJReachabilityNode(Node):
     def publish_initial_vf(self):
         # ROS2 uses a slightly different API for waiting for subscribers
         self.get_logger().info("Number of subscribers: {}".format(self.vf_pub.get_subscription_count()))
-        while self.vf_pub.get_subscription_count() < 0: # was previously 2
+        while self.vf_pub.get_subscription_count() < 1: # was previously 2
             self.get_logger().info("HJR node: Waiting for subscribers to connect")
             time.sleep(1)
         if self.vf_update_method == "pubsub":
@@ -180,7 +181,7 @@ class HJReachabilityNode(Node):
         self.get_logger().info("SDF update received")
         if not msg.data:
             return
-        # self.sdf_values = np.array(np.load("sdf.npy")).reshape(self.config.grid_shape)
+        # self.sdf_values = np.array(np.load("sdf.npy")).reshape(self.config.grid_shape) # 
         self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "vf"))
         if not self.first_message_received.is_set():
             self.first_message_received.set()
@@ -211,7 +212,8 @@ class HJReachabilityNode(Node):
                 if self.vf_update_method == "pubsub":
                     self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
                 else:  # self.vf_update_method == "file"
-                    np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/update_vf.npy", np.array(self.vf))
+                    # np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/cylinder_vf.npy", np.array(self.vf))
+                    np.save("vf.npy", np.array(self.vf))
                     self.vf_pub.publish(Bool(data=True))
                 self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 
