@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     topics:
-      robot_state: '/odom'
+      robot_state: '/mocap/odom'
       cbf_state: '/safety_filter/state'
 
       sdf_update: '/env/sdf_update'

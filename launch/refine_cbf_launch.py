@@ -31,7 +31,7 @@ def generate_launch_description():
             description='Accuracy of HJ Reachability computation'),
         DeclareLaunchArgument(
             'robot',
-            default_value='turtlebot',
+            default_value='jackal',
             description='Robot name'),
         DeclareLaunchArgument(
             'exp',
@@ -44,7 +44,7 @@ def generate_launch_description():
 
         Node(
             package='refinecbf_ros2',
-            executable='refine_cbf_node.py',
+            executable='refine_cbf_node_cbfoptkit.py',
             name='safety_filter_node',
             output='screen',
             parameters=[
@@ -69,23 +69,23 @@ def generate_launch_description():
         #                  },
         #                 ]
         # ),
-        # Node(
-        #     package='refinecbf_ros2',
-        #     executable='hj_reachability_node.py',
-        #     name='hj_reachability_node',
-        #     output='screen',
-        #     parameters=[
-        #         topics_config,
-        #         {'update_vf_online': LaunchConfiguration('update_vf_online'),
-        #          'vf_initialization_method': LaunchConfiguration('vf_initialization_method'),
-        #          'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
-        #          'vf_update_method': LaunchConfiguration('vf_update_method'),
-        #          'robot': LaunchConfiguration('robot'),
-        #          'exp': LaunchConfiguration('exp'),
-        #          'use_sim_time': LaunchConfiguration('use_sim_time'),
-        #         }
+        Node(
+            package='refinecbf_ros2',
+            executable='hj_reachability_node.py',
+            name='hj_reachability_node',
+            output='screen',
+            parameters=[
+                topics_config,
+                {'update_vf_online': LaunchConfiguration('update_vf_online'),
+                 'vf_initialization_method': LaunchConfiguration('vf_initialization_method'),
+                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
+                 'vf_update_method': LaunchConfiguration('vf_update_method'),
+                 'robot': LaunchConfiguration('robot'),
+                 'exp': LaunchConfiguration('exp'),
+                 'use_sim_time': LaunchConfiguration('use_sim_time'),
+                }
                 
-        #     ],
-        #     condition=IfCondition(LaunchConfiguration('safety_filter_active')),
-        #     ),
+            ],
+            condition=IfCondition(LaunchConfiguration('safety_filter_active')),
+            ),
         ])

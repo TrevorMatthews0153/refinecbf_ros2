@@ -30,6 +30,7 @@ install(PROGRAMS
   scripts/config.py
   scripts/utils.py
   scripts/gp2hjr_node.py
+  scripts/refine_cbf_node_cbfoptkit.py
 
   scripts/crazyflie/cf_nominal_controller.py
   scripts/crazyflie/cf_hw_interface.py
@@ -38,6 +39,11 @@ install(PROGRAMS
   scripts/turtlebot3/tb_nominal_controller.py
   scripts/turtlebot3/tb_hw_interface.py
   scripts/turtlebot3/tb_visualization.py
+
+  scripts/jackal/jackal_nominal_controller.py
+  scripts/jackal/jackal_hw_interface.py
+  scripts/jackal/jackal_visualization.py
+  scripts/jackal/pd_acc_nominal_control.py
   DESTINATION lib/${PROJECT_NAME}  
 )
 
