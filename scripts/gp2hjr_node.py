@@ -8,6 +8,7 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import qos_profile_sensor_data
 
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
@@ -69,8 +70,18 @@ def pointcloud2_to_numpy(msg: PointCloud2, wanted=("x", "y", "sdf", "var_sdf", "
 
     rec = pts_bytes[:, : dtype.itemsize].view(dtype)
     out = {}
+    # for k in wanted:
+    #     out[k] = rec[k].astype(np.float32, copy=False) if k in rec.dtype.names else None
     for k in wanted:
-        out[k] = rec[k].astype(np.float32, copy=False) if k in rec.dtype.names else None
+        if k in rec.dtype.names:
+            arr = np.asarray(rec[k], dtype=np.float32)
+            if k == "var_sdf" and arr.ndim == 2:  
+                out[k] = arr[:, 0]   # take only the first element → shape (npts,)
+            else:
+                out[k] = arr
+        else:
+            out[k] = None
+
     return out
 
 
@@ -166,15 +177,15 @@ class SDFPointCloudToGridNode(Node):
         super().__init__("sdf_pointcloud_to_grid")
 
         # --- Parameters
-        self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/env.yaml")
-        self.declare_parameter("mode", "file")  # "pubsub" or "file"
+        self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml")
+        self.declare_parameter("mode", "pubsub")  # "pubsub" or "file"
         self.declare_parameter("output_topic", "/env/sdf_update")
         self.declare_parameter("output_topic_grad_x", "/env/sdf_grad_x_update")
         self.declare_parameter("output_topic_grad_y", "/env/sdf_grad_y_update")
         self.declare_parameter("grid_info_topic", "topics/sdf_grid_info")
-        self.declare_parameter("sdf_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_sdf.npy")
-        self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_grad_x.npy")
-        self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/curr_grad_y.npy")
+        self.declare_parameter("sdf_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/sdf_sim.npy")
+        self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_x.npy")
+        self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_y.npy")
         self.declare_parameter("fill_missing", True)
 
         # --- Save Paths
@@ -236,7 +247,8 @@ class SDFPointCloudToGridNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, sub_qos)
+        # self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, sub_qos)
+        self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, qos_profile_sensor_data)
 
         self.get_logger().info(
             f"Ready. Mode={self.mode} grid=({self.ys.size}x{self.xs.size}) "

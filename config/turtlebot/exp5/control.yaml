@@ -21,7 +21,7 @@ external:
 limits:  # Make sure these are aligned with env.yaml
   max_acc: 0.5
   min_acc: -0.5
-  max_vel: 0.3
+  max_vel: 0.5
   min_vel: 0.1
   max_omega: 1.0
 

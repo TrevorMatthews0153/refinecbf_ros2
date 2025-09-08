@@ -13,9 +13,11 @@ import tqdm
 from config import Config, QuadraticCBF, InitialCBF
 from refine_cbfs import HJControlAffineDynamics, TabularControlAffineCBF
 from example_interfaces.msg import Bool
-# jax cpu only
+
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 import jax
-jax.config.update("jax_platform_name", "cpu")
+jax.config.update("jax_platform_name", "gpu")
 import threading
 import time
 from utils import load_parameters, load_array
@@ -48,6 +50,7 @@ class HJReachabilityNode(Node):
         self.hj_dynamics = self.config.hj_dynamics
         self.control_space = self.hj_dynamics.control_space
         self.disturbance_space = self.hj_dynamics.disturbance_space
+        self.convergence_count = 0
 
         # Topics (parameters)
         self.declare_parameters(
@@ -60,7 +63,7 @@ class HJReachabilityNode(Node):
 
         self.declare_parameter("vf_update_method", "file")
         self.declare_parameter("vf_update_accuracy", "very_high")
-        self.declare_parameter("vf_initialization_method", "sdf")
+        self.declare_parameter("vf_initialization_method", "file")
         self.declare_parameter("initial_vf_file", "None")
         self.declare_parameter("update_vf_online", True)
         self.service_to_start = False
@@ -85,42 +88,60 @@ class HJReachabilityNode(Node):
             raise NotImplementedError(f"{self.vf_update_method} is not a valid vf update method")
 
         # Wait while not sdf update topic received  # FIXME TM MK: blocking right now, not when using SDF
-        # self.first_message_received = threading.Event()
-        # self.spin_thread = threading.Thread(target=self.spin)
-        # self.spin_thread.start()
-        # self.first_message_received.wait()
+        self.first_message_received = threading.Event()
+        self.spin_thread = threading.Thread(target=self.spin)
+        self.spin_thread.start()
+        self.first_message_received.wait()
 
-        #Test 24August2025
-        safe_region = lambda x: -1 * (0.25**0.5 - jnp.linalg.norm(x[:2]))
-        self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
-        sdf = hj.utils.multivmap(safe_region, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
-        self.sdf_values = sdf
-        print(self.sdf_values.shape)
+        #Test SDF Comment when working with file/pubsub 24August2025
+        # safe_region = lambda x: -1 * (0.25**0.5 - jnp.linalg.norm(x[:2]))
+        # unsafe_velocity = lambda x: 10 * (x[3] - 0.1)  # keep velocity above 0.1 m/s
+        # # self.brt = lambda sdf_values: lambda t, x: jnp.minimum(x, sdf_values)
+        # sdf1 = hj.utils.multivmap(safe_region, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        # sdf2 = hj.utils.multivmap(unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        # self.sdf_values = jnp.minimum(sdf1, sdf2)
+        # print(self.sdf_values.shape)
         self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy) #, value_postprocessor=self.brt(self.sdf_values))
         
         self.vf_initialization_method = self.get_parameter("vf_initialization_method").value
         if self.vf_initialization_method == "sdf":
+            self.get_logger().info("Initializing VF with SDF")
             self.vf = self.sdf_values.copy()
+
         elif self.vf_initialization_method == "cbf":
             # Here the Quadratic CBF is based on obstacles we instead want to update it to use GP-SDF
             # cbf_params = control_config["initial_cbf"]
+            self.get_logger().info("Initializing VF with CBF")
             original_cbf = QuadraticCBF(self.dynamics, cbf_params["Parameters"], test=False)
-
-            #initialize CBF with sdf-gp rather than obstacles
-            # self.vf = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "state_domain")
-            # x_lin = np.linspace()
-            # y_lin = np.linspace()
-            # original_cbf = InitialCBF(self.dynamics, (x_lin, y_lin), sdf_grid, grad_x=grad_x, grad_y=grad_y, test=False)
-
             tabular_cbf = TabularControlAffineCBF(self.dynamics, params={}, test=False, grid=self.grid)
             tabular_cbf.tabularize_cbf(original_cbf)
             self.vf = tabular_cbf.vf_table.copy()
+
         elif self.vf_initialization_method == "file":
-            self.vf = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "cbf_vfs")
+            self.get_logger().info("Initializing VF with file")
+            sdf_init = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "sdf_sim")
+            # stack to match grid shape if needed
+            if len(sdf_init.shape) < len(self.config.grid_shape):
+                # stack for each missing dimension
+                for i in range(len(sdf_init.shape), len(self.config.grid_shape)):    
+                    sdf_init = jnp.stack([sdf_init] * self.config.grid_shape[i], axis=-1)
+
+            unsafe_velocity = lambda x: 10 * (x[3] - 0.1)  # keep velocity above 0.1 m/s
+            sdf_vel = hj.utils.multivmap(unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states) 
+            self.sdf_values = jnp.minimum(sdf_init, sdf_vel)       
+            # self.sdf_values = self.sdf_init
+            self.vf = self.sdf_values.copy()
+
+            # Use if update_vf_online is False
+            # self.get_logger().info("Initializing VF with file")
+            # self.sdf_values = load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "jdfsdjkfbs").reshape(self.config.grid_shape)
+            # self.vf = self.sdf_values.copy()
+
             if self.vf.ndim == self.grid.ndim + 1:
                 self.vf = self.vf[-1]
             print("File Loaded")
             assert self.vf.shape == tuple(self.config.grid_shape), "vf file is not compatible with grid size"
+
         else:
             raise NotImplementedError("{} is not a valid initialization method".format(self.vf_initialization_method))
         self.get_logger().info(f"Share of safe cells: {np.sum(self.vf >= 0) / self.vf.size:.3f}")
@@ -155,10 +176,12 @@ class HJReachabilityNode(Node):
         if self.vf_update_method == "pubsub":
             msg = ValueFunctionMsg()
             msg.vf = self.vf.flatten().tolist()  # Ensure data is in a suitable format
-            self.vf_pub.publish(msg)
+            if not self.update_vf_flag:
+                self.vf_pub.publish(msg)
         else:  # self.vf_update_method == "file"
-            np.save("vf.npy", self.vf.copy())
-            self.vf_pub.publish(Bool(data=True))  # Publish a Bool message indicating completion
+            np.save("/root/ros2_ws/vf.npy", self.vf.copy())
+            if not self.update_vf_flag:
+                self.vf_pub.publish(Bool(data=True))  # Publish a Bool message indicating completion
 
     def callback_sdf_update_pubsub(self, msg):
         # need to think about message type (Pointcloud to vfmessage)
@@ -171,7 +194,27 @@ class HJReachabilityNode(Node):
         This method updates the obstacle and the solver settings.
         """
         self.get_logger().info("SDF update received")
-        self.sdf_values = jnp.array(msg.vf).reshape(self.config.grid_shape)
+        #self.sdf_values = jnp.array(msg.vf).reshape(self.config.grid_shape)
+        if not msg.vf:
+            return
+        
+        sdf_init = jnp.array(msg.vf)
+        if sdf_init.size != np.prod(self.config.grid_shape):
+            try:
+                sdf_init = sdf_init.reshape(self.config.grid_shape[0], self.config.grid_shape[1])
+                for i in range(len(sdf_init.shape), len(self.config.grid_shape)):
+                    # stack for each missing dimension
+                    sdf_init = jnp.stack([sdf_init] * self.config.grid_shape[i], axis=-1)
+            except:
+                self.get_logger().error("SDF update has incorrect size")
+                return
+        else:
+            sdf_init = sdf_init.reshape(self.config.grid_shape)
+
+        unsafe_velocity = lambda x: 10 * (x[3] - 0.1)  # keep velocity above 0.1 m/s
+        sdf_vel = hj.utils.multivmap(unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        self.sdf_values = jnp.minimum(sdf_init, sdf_vel)
+
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:
@@ -179,10 +222,21 @@ class HJReachabilityNode(Node):
 
     def callback_sdf_update_file(self, msg):
         self.get_logger().info("SDF update received")
+
         if not msg.data:
             return
         # self.sdf_values = np.array(np.load("sdf.npy")).reshape(self.config.grid_shape) # 
-        self.sdf_values = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "vf"))
+
+        sdf_init = jnp.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "sdf_sim"))
+        if len(sdf_init.shape) < len(self.config.grid_shape):
+            for i in range(len(sdf_init.shape), len(self.config.grid_shape)):
+                # stack for each missing dimension
+                sdf_init = jnp.stack([sdf_init] * self.config.grid_shape[i], axis=-1)
+
+        unsafe_velocity = lambda x: 10 * (x[3] - 0.1)  # keep velocity above 0.1 m/s
+        sdf_vel = hj.utils.multivmap(unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        self.sdf_values = jnp.minimum(sdf_init, sdf_vel)
+
         if not self.first_message_received.is_set():
             self.first_message_received.set()
         else:
@@ -196,25 +250,34 @@ class HJReachabilityNode(Node):
             if self.update_vf_flag:
                 time_start = time.time()
                 self.get_logger().info(f"Share of safe cells: {np.sum(self.vf >= 0) / self.vf.size:.3f}")
-                for i in range(1):
+                for i in range(5):
                     new_values = hj.step(
                         self.solver_settings,
                         self.hj_dynamics,
                         self.grid,
                         0.0,
                         self.vf,
-                        -0.1,
+                        -0.02,
                         progress_bar=False,
                     )
+                
                     self.vf = jnp.minimum(new_values, self.sdf_values)
-                # print(self.vf.shape)
-                # self.vf = new_values
+
                 if self.vf_update_method == "pubsub":
-                    self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
+                    if self.convergence_count < 20:
+                        self.get_logger().info("Convergence count: {}".format(self.convergence_count))
+                        self.convergence_count += 1
+                    else:
+                        self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
+
                 else:  # self.vf_update_method == "file"
-                    # np.save("/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp3/cylinder_vf.npy", np.array(self.vf))
                     np.save("vf.npy", np.array(self.vf))
-                    self.vf_pub.publish(Bool(data=True))
+                    if self.convergence_count < 20:
+                        self.get_logger().info("Convergence count: {}".format(self.convergence_count))
+                        self.convergence_count += 1
+                    else:
+                        self.vf_pub.publish(Bool(data=True))
+
                 self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 
 
