@@ -222,6 +222,7 @@ class SDFPointCloudToGridNode(Node):
             self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
             self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
             self.info_pub = self.create_publisher(String, info_topic, qos)
+            self.first_info_sent = False
             self.get_logger().info(
                 f"Pub mode: VF->{out_vf_topic}, gradX->{out_gx_topic}, gradY->{out_gy_topic}"
             )
@@ -311,26 +312,32 @@ class SDFPointCloudToGridNode(Node):
                 gy_grid = dVy.astype(np.float32)
 
             if self.mode == "pubsub":
-                vf_msg = ValueFunctionMsg(); vf_msg.vf = grid_phi.ravel().tolist()
-                gx_msg = ValueFunctionMsg(); gx_msg.vf = gx_grid.ravel().tolist()
-                gy_msg = ValueFunctionMsg(); gy_msg.vf = gy_grid.ravel().tolist()
+                vf_msg = ValueFunctionMsg(); vf_msg.vf = (grid_phi.T).ravel().tolist()
+                gx_msg = ValueFunctionMsg(); gx_msg.vf = (gx_grid.T).ravel().tolist()
+                gy_msg = ValueFunctionMsg(); gy_msg.vf = (gy_grid.T).ravel().tolist()
 
+                if self.first_info_sent is False:
+                    np.save(self.sdf_path, grid_phi.T)
+                    np.save(self.gx_path, gx_grid.T)
+                    np.save(self.gy_path, gy_grid.T)
+                    self.first_info_sent = True
+                
                 self.vf_pub.publish(vf_msg)
                 self.gx_pub.publish(gx_msg)
                 self.gy_pub.publish(gy_msg)
                 self._publish_info(msg.header.frame_id)
 
                 self.get_logger().info(
-                    f"Published VF(SDF+var) {grid_phi.shape[0]}x{grid_phi.shape[1]}, "
+                    f"Published VF(SDF+var) {grid_phi.shape[1]}x{grid_phi.shape[0]}, "
                     f"valid={valid.mean()*100:.1f}% | grads published (cloud{' fallback' if gx_raw is None else ''})"
                 )
             else:
                 self._publish_bool_triplet()
-                np.save(self.sdf_path, grid_phi)
-                np.save(self.gx_path, gx_grid)
-                np.save(self.gy_path, gy_grid)
+                np.save(self.sdf_path, grid_phi.T)
+                np.save(self.gx_path, gx_grid.T)
+                np.save(self.gy_path, gy_grid.T)
                 self.get_logger().info(
-                    f"Saved VF(SDF+var) {grid_phi.shape[0]}x{grid_phi.shape[1]}, "
+                    f"Saved VF(SDF+var) {grid_phi.shape[1]}x{grid_phi.shape[0]}, "
                     f"valid={valid.mean()*100:.1f}% | grads saved (cloud{' fallback' if gx_raw is None else ''})"
                 )
 
