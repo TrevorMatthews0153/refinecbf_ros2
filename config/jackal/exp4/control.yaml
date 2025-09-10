@@ -2,8 +2,8 @@ controller_type: "PD_acc"  # one of ["PD", "PD_acc", "HJR"]
 nominal:
   goal: #update later
     coordinates:
-      - 2.0
-      - 0.0
+      - 2.5
+      - -1.5
       - 0.0
       - 0.0
     padding:
@@ -26,7 +26,7 @@ limits:  # Make sure these are aligned with env.yaml
   max_omega: 1.0
 
 asif:
-  gamma: 0.2
+  gamma: 0.5
   slack: True
   weighting: [15.0, 1.0]
 

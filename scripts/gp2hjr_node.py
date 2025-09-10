@@ -8,6 +8,7 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import qos_profile_sensor_data
 
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
@@ -69,15 +70,18 @@ def pointcloud2_to_numpy(msg: PointCloud2, wanted=("x", "y", "sdf", "var_sdf", "
 
     rec = pts_bytes[:, : dtype.itemsize].view(dtype)
     out = {}
+    # for k in wanted:
+    #     out[k] = rec[k].astype(np.float32, copy=False) if k in rec.dtype.names else None
     for k in wanted:
         if k in rec.dtype.names:
             arr = np.asarray(rec[k], dtype=np.float32)
-            if k == "var_sdf" and arr.ndim == 2:
+            if k == "var_sdf" and arr.ndim == 2:  
                 out[k] = arr[:, 0]   # take only the first element → shape (npts,)
             else:
                 out[k] = arr
         else:
             out[k] = None
+
     return out
 
 
@@ -173,15 +177,15 @@ class SDFPointCloudToGridNode(Node):
         super().__init__("sdf_pointcloud_to_grid")
 
         # --- Parameters
-        self.declare_parameter("env_config_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp3/env.yaml")
+        self.declare_parameter("env_config_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/env.yaml")
         self.declare_parameter("mode", "file")  # "pubsub" or "file"
         self.declare_parameter("output_topic", "/env/sdf_update")
         self.declare_parameter("output_topic_grad_x", "/env/sdf_grad_x_update")
         self.declare_parameter("output_topic_grad_y", "/env/sdf_grad_y_update")
         self.declare_parameter("grid_info_topic", "topics/sdf_grid_info")
-        self.declare_parameter("sdf_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp3/curr_sdf.npy")
-        self.declare_parameter("grad_x_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp3/curr_grad_x.npy")
-        self.declare_parameter("grad_y_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp3/curr_grad_y.npy")
+        self.declare_parameter("sdf_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/curr_sdf.npy")
+        self.declare_parameter("grad_x_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/curr_grad_x.npy")
+        self.declare_parameter("grad_y_file_path", "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/curr_grad_y.npy")
         self.declare_parameter("fill_missing", True)
 
         # --- Save Paths
@@ -218,6 +222,7 @@ class SDFPointCloudToGridNode(Node):
             self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
             self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
             self.info_pub = self.create_publisher(String, info_topic, qos)
+            self.first_info_sent = False
             self.get_logger().info(
                 f"Pub mode: VF->{out_vf_topic}, gradX->{out_gx_topic}, gradY->{out_gy_topic}"
             )
@@ -243,7 +248,8 @@ class SDFPointCloudToGridNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, sub_qos)
+        # self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, sub_qos)
+        self.sub = self.create_subscription(PointCloud2, "/sdf_point_cloud", self._on_cloud, qos_profile_sensor_data)
 
         self.get_logger().info(
             f"Ready. Mode={self.mode} grid=({self.ys.size}x{self.xs.size}) "
@@ -306,26 +312,32 @@ class SDFPointCloudToGridNode(Node):
                 gy_grid = dVy.astype(np.float32)
 
             if self.mode == "pubsub":
-                vf_msg = ValueFunctionMsg(); vf_msg.vf = grid_phi.ravel().tolist()
-                gx_msg = ValueFunctionMsg(); gx_msg.vf = gx_grid.ravel().tolist()
-                gy_msg = ValueFunctionMsg(); gy_msg.vf = gy_grid.ravel().tolist()
+                vf_msg = ValueFunctionMsg(); vf_msg.vf = (grid_phi.T).ravel().tolist()
+                gx_msg = ValueFunctionMsg(); gx_msg.vf = (gx_grid.T).ravel().tolist()
+                gy_msg = ValueFunctionMsg(); gy_msg.vf = (gy_grid.T).ravel().tolist()
 
+                if self.first_info_sent is False:
+                    np.save(self.sdf_path, grid_phi.T)
+                    np.save(self.gx_path, gx_grid.T)
+                    np.save(self.gy_path, gy_grid.T)
+                    self.first_info_sent = True
+                
                 self.vf_pub.publish(vf_msg)
                 self.gx_pub.publish(gx_msg)
                 self.gy_pub.publish(gy_msg)
                 self._publish_info(msg.header.frame_id)
 
                 self.get_logger().info(
-                    f"Published VF(SDF+var) {grid_phi.shape[0]}x{grid_phi.shape[1]}, "
+                    f"Published VF(SDF+var) {grid_phi.shape[1]}x{grid_phi.shape[0]}, "
                     f"valid={valid.mean()*100:.1f}% | grads published (cloud{' fallback' if gx_raw is None else ''})"
                 )
             else:
                 self._publish_bool_triplet()
-                np.save(self.sdf_path, grid_phi)
-                np.save(self.gx_path, gx_grid)
-                np.save(self.gy_path, gy_grid)
+                np.save(self.sdf_path, grid_phi.T)
+                np.save(self.gx_path, gx_grid.T)
+                np.save(self.gy_path, gy_grid.T)
                 self.get_logger().info(
-                    f"Saved VF(SDF+var) {grid_phi.shape[0]}x{grid_phi.shape[1]}, "
+                    f"Saved VF(SDF+var) {grid_phi.shape[1]}x{grid_phi.shape[0]}, "
                     f"valid={valid.mean()*100:.1f}% | grads saved (cloud{' fallback' if gx_raw is None else ''})"
                 )
 

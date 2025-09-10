@@ -60,7 +60,7 @@ class SafetyFilterNode(Node):
         )
 
         self.declare_parameter("safety_filter_active", True)
-        self.declare_parameter("vf_update_method", "file") # file or pubsub
+        self.declare_parameter("vf_update_method", "pubsub") # file or pubsub
 
         control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
 
@@ -156,19 +156,17 @@ class SafetyFilterNode(Node):
             return
         try:
             # prev update_vf.npy
-            self.get_logger().info(f"Current Working Directory: {os.getcwd()}")
-            self.back_buffer_cbf.vf_table = np.load("/home/administrator/refine_ws/vf.npy").reshape(self.config.grid_shape) #FIXME: previously vf.np
-            # test = np.unique(np.load("/home/administrator/refine_ws/vf.npy"))
-            # self.get_logger().info(f"Number of unique_values #1: {test}")
-            # /home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp3/cbf_vfs.npy
+            # self.get_logger().info(f"Current Working Directory: {os.getcwd()}")
+            self.back_buffer_cbf.vf_table = np.load("/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/update_vf.npy").reshape(self.config.grid_shape) #FIXME: previously vf.np
+            self.get_logger().info(f"Safe cells of updated vf: {np.sum(self.back_buffer_cbf.vf_table>=0) / self.back_buffer_cbf.vf_table.size}")
         except (ValueError, EOFError):
             import time
             time.sleep(0.03)
             try:
                 # prev update_vf.npy
-                self.back_buffer_cbf.vf_table = np.load("/home/administrator/refine_ws/vf.npy").reshape(self.config.grid_shape) #FIXME: previously vf.np
+                self.back_buffer_cbf.vf_table = np.load("/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/update_vf.npy").reshape(self.config.grid_shape) #FIXME: previously vf.np
+                
                 test = np.unique(np.load("vf.npy"))
-                # self.get_logger().info(f"Number of unique_values #2: {test}")
             except EOFError:
                 self.get_logger().warn("Value function file not found, skipping update")
                 return

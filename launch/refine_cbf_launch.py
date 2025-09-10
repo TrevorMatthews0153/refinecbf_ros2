@@ -35,7 +35,7 @@ def generate_launch_description():
             description='Robot name'),
         DeclareLaunchArgument(
             'exp',
-            default_value="2",
+            default_value="1",
             description='Which experiment to run'),
         DeclareLaunchArgument(
             'use_sim_time', 
