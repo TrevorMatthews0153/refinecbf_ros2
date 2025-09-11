@@ -7,6 +7,9 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from refinecbf_ros2.msg import Array
 from refinecbf_ros2.srv import HighLevelCommand
+from std_msgs.msg import Float32
+from example_interfaces.msg import Bool
+
 import sys
 import os
 
@@ -32,7 +35,11 @@ class TurtlebotInterface(BaseInterface):
 
     def __init__(self):
         super().__init__("turtlebot_interface")
-        control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control")
+        control_config = load_parameters(
+            self.get_parameter("robot").value,
+            self.get_parameter("exp").value,
+            "control"
+        )
 
         self.declare_parameters(
             "",
@@ -46,6 +53,7 @@ class TurtlebotInterface(BaseInterface):
                 ("limits.max_omega", control_config["limits"]["max_omega"]),
                 ("controller_type", control_config["controller_type"]),
                 ("target", control_config["nominal"]["goal"]["coordinates"]),
+                ("goal_reached_threshold", control_config["nominal"]["goal"].get("reached_threshold", 0.20)),  # meters
             ]
         )
 
@@ -53,6 +61,8 @@ class TurtlebotInterface(BaseInterface):
         self.external_control = None
         self.buffer_time_external_control = self.get_parameter("buffer_time_external_control").value  # seconds
         self.buffer_time_mod_external_control = self.get_parameter("buffer_time_mod_external_control").value  # seconds
+        self.external_control_ts = None
+        self.external_control_mod_ts = None
 
         self.max_vel = self.get_parameter("limits.max_vel").value
         self.min_vel = self.get_parameter("limits.min_vel").value
@@ -60,7 +70,15 @@ class TurtlebotInterface(BaseInterface):
         self.min_acc = self.get_parameter("limits.min_acc").value
         self.max_omega = self.get_parameter("limits.max_omega").value
         self.controller_type = self.get_parameter("controller_type").value
+
+
         self.target = np.array(self.get_parameter("target").value)
+        self.goal_thresh = self.get_parameter("goal_reached_threshold").value
+
+        self.goal_reached_pub = self.create_publisher(Bool, "goal_reached", 10)
+        self.goal_distance_pub = self.create_publisher(Float32, "distance_to_goal", 10)
+        self.create_subscription(Array, "current_goal", self._cb_current_goal, 10)
+
         self.is_running = False
         self.init_subscribers()
 
@@ -69,6 +87,8 @@ class TurtlebotInterface(BaseInterface):
         self.current_x = None
         self.current_y = None
         self.current_yaw = None
+
+        self._goal_ack_sent = False
 
     def handle_high_level_command(self, request, response):
         if request.command == "start":
@@ -90,6 +110,15 @@ class TurtlebotInterface(BaseInterface):
             response.response = "actions not implemented ({} command ignored)".format(request.command)
         return response
 
+    def _cb_current_goal(self, msg: Array):
+        # Expect [x, y, theta, v] in Array.value
+        vals = np.array(msg.value, dtype=float).reshape(-1)
+        if vals.size == 2:
+            vals = np.array([vals[0], vals[1], 0.0, 0.0], dtype=float)
+        self.target = vals[:4]
+        self._goal_ack_sent = False
+        self.get_logger().info(f"New current goal received: [{self.target[0]:.3f}, {self.target[1]:.3f}, {self.target[2]:.3f}]")
+
     def callback_state(self, state_in_msg):
         w = state_in_msg.pose.pose.orientation.w
         x = state_in_msg.pose.pose.orientation.x
@@ -102,6 +131,7 @@ class TurtlebotInterface(BaseInterface):
         # yaw = np.arctan2(np.sin(yaw),np.cos(yaw)) # Remap yaw to -pi to pi range
         euler = rowan.to_euler([x, y, z, w])
         # self.get_logger().info("Yaw: {:.2f}".format(euler[2]))
+        # self.get_logger().info(f"Position: x={state_in_msg.pose.pose.position.x:.2f}, y={state_in_msg.pose.pose.position.y:.2f}, Yaw: {euler[2]:.2f}, v: {v:.2f}")
         yaw = euler[2]
         self.current_x = state_in_msg.pose.pose.position.x
         self.current_y = state_in_msg.pose.pose.position.y
@@ -110,17 +140,36 @@ class TurtlebotInterface(BaseInterface):
         state_out_msg = Array()
         state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw, v]
         self.state_pub.publish(state_out_msg)
+        if self.target is not None and np.isfinite(self.current_x) and np.isfinite(self.current_y):
+            dist = float(np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2]))
+            self.goal_distance_pub.publish(Float32(data=dist))
+
+            if (dist <= self.goal_thresh) and (not self._goal_ack_sent):
+                self.get_logger().info(f"Goal reached {self.target[:2]}!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                self.goal_reached_pub.publish(Bool(data=True))
+                self._goal_ack_sent = True
 
     def process_safe_control(self, control_in_msg):
         if self.controller_type =="PD_acc":
             #compute velocity control from acceleration control
             t = time.time()
-            dt = t - self.last_t
+            dt = max(t - self.last_t, 1e-3)
             control_in = control_in_msg.value
-            v_next = self.current_v + control_in[0] * dt
-            # v_next = np.clip(v_next, 0.0, 0.05)
+            acc = control_in[0]
+            v_next = self.current_v + acc * dt
+            dv = np.clip(v_next - self.current_v, self.min_acc * dt, self.max_acc * dt)
+            v_next = self.current_v + dv
+            if v_next < self.min_vel:
+                v_next = self.min_vel
+            
+            elif v_next > self.max_vel:
+                v_next = self.max_vel
+            
+            if np.linalg.norm(control_in) == 0.0:
+                v_next = 0.0
+
             control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = np.clip(v_next, 0.0, self.max_vel)  # FIXME: Ideally self.min_vel
+            control_out_msg.linear.x = v_next  # FIXME: Ideally self.min_vel
             control_out_msg.linear.y = 0.0
             control_out_msg.linear.z = 0.0
         else:
@@ -135,18 +184,11 @@ class TurtlebotInterface(BaseInterface):
         control_out_msg.angular.z = np.clip(control_in[1], -self.max_omega, self.max_omega)
         # self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
 
-        # Stope at the goal
-        # print(self.current_x, self.current_y, self.current_yaw)
-        if self.current_x is not None and self.current_y is not None:
-            dist_to_goal = np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2])
-            if dist_to_goal < 0.05:
+        # Stop at the goal
+        if self._goal_ack_sent:
                 control_out_msg.linear.x = 0.0
                 control_out_msg.angular.z = 0.0
                 self.get_logger().info("Reached Goal")
-                # delta_theta = self.target[2] - self.current_yaw
-                # if delta_theta < 0.05:
-                #     control_out_msg.angular.z = 0.0
-                #     self.get_logger().info("Reached Goal")
 
         # self.get_logger().info(f"Control linear: {control_out_msg.linear.x}, Control angular: {control_out_msg.angular.z}")
         return control_out_msg
@@ -163,6 +205,7 @@ class TurtlebotInterface(BaseInterface):
         
         self.external_control = control_out_msg
         self.buffer_time_external_control = self.get_clock.now().nanoseconds
+        self.external_control_ts = self.get_clock().now().nanoseconds
         return control_out_msg
     
     def process_disturbance(self, disturbance_msg):

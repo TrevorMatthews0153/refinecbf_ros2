@@ -1,8 +1,12 @@
 controller_type: "PD_acc"  # one of ["PD", "PD_acc", "HJR"]
 nominal:
+  goals:
+    - [3.5, 0.0, 0.0, 0.0]  # x, y, z, yaw
+    - [-5.0, 0.0, 0.0, 0.0]  # x, y, z, yaw
+    
   goal: #update later
     coordinates:
-      - 2.0
+      - 3.5
       - 0.0
       - 0.0
       - 0.0
@@ -19,14 +23,14 @@ external:
   buffer_time: 1.0  # seconds
   mod_buffer_time: 5.0  # seconds
 limits:  # Make sure these are aligned with env.yaml
-  max_acc: 0.5
-  min_acc: -0.5
-  max_vel: 0.5
+  max_acc: 0.3
+  min_acc: -0.3
+  max_vel: 0.7
   min_vel: 0.1
   max_omega: 1.0
 
 asif:
-  gamma: 0.5
+  gamma: 0.2
   slack: True
   weighting: [10.0, 1.0]
 
