@@ -47,7 +47,7 @@ def generate_launch_description():
         #     'sdf_update_method', default_value='file',
         #     description='Message parsing method for VF update'),
         DeclareLaunchArgument(
-            'vf_update_accuracy', default_value='high',
+            'vf_update_accuracy', default_value='medium',
             description='Accuracy of HJ Reachability computation'),
         # DeclareLaunchArgument(
         #     'env_config_file', default_value='env.yaml',

@@ -56,6 +56,7 @@ class HJReachabilityNode(Node):
         # Load configuration
         super().__init__("hj_reachability_node")
         self.config = Config(self, hj_setup=True)
+
         # Initialize dynamics, grid, and Hamilton-Jacobi dynamics
         self.dynamics = self.config.dynamics
         self.grid = self.config.grid
@@ -63,6 +64,12 @@ class HJReachabilityNode(Node):
         self.control_space = self.hj_dynamics.control_space
         self.disturbance_space = self.hj_dynamics.disturbance_space
         self.counter = 0 #manual delay to allow hjr to converge before first publish
+        
+        #Initialize vf_archive to store the vf after each step
+        # self.vf_archive = [] # archive CBFs after each hj step
+        # self.archive_path = "/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/vf_archive.npy"
+        # rclpy.on_shutdown(self._save_archive)
+        
         # Topics (parameters)
         self.declare_parameters(
             "",
@@ -73,11 +80,10 @@ class HJReachabilityNode(Node):
         )
 
         self.declare_parameter("vf_update_method", "file")
-        # self.declare_parameter("sdf_update_method", "file")
-        self.declare_parameter("vf_update_accuracy", "very_high")
+        self.declare_parameter("vf_update_accuracy", "high")
         self.declare_parameter("vf_initialization_method", "file")
         self.declare_parameter("initial_vf_file", "None")
-        self.declare_parameter("update_vf_online", True)
+        self.declare_parameter("update_vf_online", False)
         self.service_to_start = False
         control_config = load_parameters(self.get_parameter("robot").value, self.get_parameter("exp").value, "control") #update goal
         self.get_logger().info(f"Experiment Number loaded: {self.get_parameter('exp').value}")
@@ -89,20 +95,22 @@ class HJReachabilityNode(Node):
         self.sdf_update_topic = self.get_parameter("topics.sdf_update").value
         self.sdf_available = False
 
+        self.get_logger().info(f"update_vf_online: {self.get_parameter('update_vf_online').value}")
+
         if self.vf_update_method == "pubsub":
-            self.get_logger().info("Using pubsub for vf updates")
+            self.get_logger().info("Using pubsub for value function updates")
             self.sdf_subscriber = self.create_subscription(
                 ValueFunctionMsg, self.sdf_update_topic, self.callback_sdf_update_pubsub, 1
             )
         elif self.vf_update_method == "file":
-            self.get_logger().info("Using file for vf updates")
+            self.get_logger().info("Using file for value function updates")
             self.sdf_subscriber = self.create_subscription(
                 Bool, self.sdf_update_topic, self.callback_sdf_update_file, 1
             )
         else:
             raise NotImplementedError(f"{self.vf_update_method} is not a valid vf update method")
         
-        self.unsafe_velocity = lambda x: 15 * (x[3] - 0.2) 
+        self.unsafe_velocity = lambda x: 10 * (x[3] - 0.1) 
         self.sdf_vel = hj.utils.multivmap(self.unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
 
 
@@ -124,7 +132,7 @@ class HJReachabilityNode(Node):
         self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy) #, value_postprocessor=self.brt(self.sdf_values))
         
         self.vf_initialization_method = self.get_parameter("vf_initialization_method").value
-        self.get_logger().info(f"Using {self.vf_initialization_method} for value function initialization")
+        # self.get_logger().info(f"Using {self.vf_initialization_method} for value function initialization")
 
         if self.vf_initialization_method == "sdf":
             self.get_logger().info("Initializing VF with SDF")
@@ -246,15 +254,28 @@ class HJReachabilityNode(Node):
         if not msg.data:
             return
         
-        # Collect new SDF, apply the Velocity SDF, and update the SDF values used in HJ
-        sdf_init = np.array(load_array(self.get_parameter("robot").value, self.get_parameter("exp").value, "curr_sdf"))
-        if len(sdf_init.shape) < len(self.config.grid_shape):
-            for i in range(len(sdf_init.shape), len(self.config.grid_shape)):
-                # stack for each missing dimension
-                sdf_init = jnp.stack([sdf_init] * self.config.grid_shape[i], axis=-1)
-        
-        # unsafe_velocity = lambda x: 15 * (x[3] - 0.1)  # keep velocity above 0.1 m/s
-        # sdf_vel = hj.utils.multivmap(unsafe_velocity, jnp.arange(self.config.grid.ndim))(self.config.grid.states)
+        try:
+            sdf_np = load_array(self.get_parameter('robot').value,self.get_parameter('exp').value,'curr_sdf')   # (51, 51)
+        except FileNotFoundError as e:
+            self.get_logger().error(f"SDF update file not found: {e}")
+            return
+        except (EOFError, OSError) as e:
+            self.get_logger().error(f"SDF update file could not be read: {e}")
+            return
+        except Exception as e:
+            self.get_logger().error(f"Unexpected error loading SDF update file: {e}")
+            return
+            
+        target_shape = tuple(self.config.grid_shape)         # (51, 51, 41, 21)
+        if sdf_np.shape != tuple(target_shape[:sdf_np.ndim]):
+            raise ValueError(f"sdf file shape {sdf_np.shape} doesn't match "
+                            f"leading target dims {target_shape[:sdf_np.ndim]}")
+
+        # --- broadcast by adding trailing singleton dims, then expand ---
+        sdf_init = jnp.asarray(sdf_np, dtype=jnp.float32)    # (51, 51)
+        need = len(target_shape) - sdf_init.ndim
+        sdf_init = jnp.reshape(sdf_init, sdf_init.shape + (1,)*need)   # (51,51,1,1)
+        sdf_init = jnp.broadcast_to(sdf_init, target_shape)            # (51,51,41,21)
         self.sdf_values = jnp.minimum(sdf_init, self.sdf_vel)
 
         # Check if this is the first message recieved
@@ -262,6 +283,17 @@ class HJReachabilityNode(Node):
             self.first_message_received.set()
         else:
             self.solver_settings = hj.SolverSettings.with_accuracy(self.vf_update_accuracy)
+    
+    # def _save_archive(self):
+    #     try:
+    #         if len(self.vf_archive) == 0:
+    #             self.get_logger().info("No vf frames to save; archive is empty.")
+    #             return
+    #         arr = np.stack(self.vf_archive, axis=0)
+    #         np.save(self.archive_path, arr)
+    #         self.get_logger().info(f"Saved vf archive with {arr.shape[0]} steps to {self.archive_path}")
+    #     except Exception as e:
+    #         self.get_logger().error(f"Failed to save archive: {e}")
 
     def update_vf(self):
         """
@@ -271,7 +303,7 @@ class HJReachabilityNode(Node):
             if self.update_vf_flag:
                 time_start = time.time()
                 safe_cells = np.sum(self.vf >= 0) / self.vf.size
-                self.get_logger().info(f"Share of safe cells: {safe_cells:.3f}")
+                # self.get_logger().info(f"Share of safe cells: {safe_cells:.3f}")
                 self.safe_cell_pub.publish(Float32(data=float(safe_cells)))
                 # self.get
                 for i in range(5):
@@ -286,8 +318,12 @@ class HJReachabilityNode(Node):
                     )
                     self.vf = jnp.minimum(new_values, self.sdf_values)
 
+                # Archive the updated value function
+                # self.vf_archive = self.vf_archive.append(np.array(self.vf))
+
+                # Publish the updated value function to safety filter
                 if self.vf_update_method == "pubsub":
-                    if self.counter > 10:
+                    if self.counter > 6:
                         self.get_logger().info("Published updated vf to refineCBF")
                         self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
                     else:
@@ -296,16 +332,26 @@ class HJReachabilityNode(Node):
 
                 else:  # self.vf_update_method == "file"
                     np.save("/home/administrator/refine_ws/src/refinecbf_ros2/config/jackal/exp4/update_vf.npy", np.array(self.vf))
-                    if self.counter > 10:
+                    if self.counter > 6:
                         self.get_logger().info("Published updated vf to refineCBF")
                         self.vf_pub.publish(Bool(data=True))
                     else:
-                        self.get_logger().info(f"Current Counter value: {self.counter + 1}")
+                        # self.get_logger().info(f"Current Counter value: {self.counter + 1}")
                         self.counter += 1
                 self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
 
 
 def main(args=None):
+    # rclpy.init(args=args)
+    # node = HJReachabilityNode()
+    # try:
+    #     rclpy.spin(node)
+    # except KeyboardInterrupt:
+    #     node.get_logger().info("Ctrl+C pressed, saving archive...")
+    #     # node._save_archive()
+    # finally:
+    #     node.destroy_node()
+    #     rclpy.shutdown()
     rclpy.init(args=args)
     hj_reachability_node = HJReachabilityNode()
     rclpy.spin(hj_reachability_node)

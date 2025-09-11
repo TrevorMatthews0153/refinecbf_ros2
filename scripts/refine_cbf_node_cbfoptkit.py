@@ -104,9 +104,9 @@ class SafetyFilterNode(Node):
         self.nominal_frequency = self.get_parameter("control.nominal.frequency").value
         self.nominal_time_period = 1.0 / self.nominal_frequency
         self.get_logger().info(f"Using gamma: {gamma}, slackify: {slackify_safety_constraint}")
-        alpha = lambda x: 0.2 * x
-        self.hj_model = HJModel(grid=self.grid, grid_values=None) # Updated from None
-        self.hj_model_back = HJModel(grid=self.grid, grid_values=None) # Updated from None
+        alpha = lambda x: gamma * (x - 0.1) # Changed from 0.0 to 0.1 to take the 0.1 level set rather than the 0 level set
+        self.hj_model = HJModel(grid=self.grid, grid_values=None)
+        self.hj_model_back = HJModel(grid=self.grid, grid_values=None)
         self.get_logger().info(f"control space: {self.dynamics.control_space}")
         self.active_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())
         self.back_buffer_cbf = HJReachabilityControlAffineCBF(self.dynamics, model=self.hj_model, time_invariant=True, logger=self.get_logger())

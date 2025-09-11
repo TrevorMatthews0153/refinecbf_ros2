@@ -115,10 +115,22 @@ class JackalInterface(BaseInterface):
             t = time.time()
             dt = t - self.last_t
             control_in = control_in_msg.value
-            v_next = ( self.current_v + control_in[0] * dt )
-            # v_next = np.clip(v_next, 0.0, 0.05)
+
+            v_next = ( self.current_v + control_in[0] * dt ) # controller computed next v
+            dv = np.clip(v_next - self.current_v, self.min_acc * dt, self.max_acc * dt) #rate limiting
+            v_next = self.current_v + dv #adjusted next velocity
+            
+            # avoid integrator windup
+            if v_next > self.max_vel:
+                v_next = self.max_vel
+            elif v_next < self.min_vel:
+                v_next = self.min_vel
+            
+            if np.linalg.norm(control_in) == 0.0: #enforce 0 velocity commands
+                v_next = 0.0
+
             control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = np.clip(v_next, self.min_vel, self.max_vel)
+            control_out_msg.linear.x = v_next # np.clip(v_next, self.min_vel, self.max_vel)
             control_out_msg.linear.y = 0.0
             control_out_msg.linear.z = 0.0
         else:
