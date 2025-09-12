@@ -38,6 +38,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', 
             description='Use simulation (Gazebo) clock if true'),
+        DeclareLaunchArgument(
+            'do_hjr', default_value='True',
+            description='Whether to use HJ Reachability'),
 
 
         Node(
@@ -81,6 +84,7 @@ def generate_launch_description():
                  'robot': LaunchConfiguration('robot'),
                  'exp': LaunchConfiguration('exp'),
                  'use_sim_time': LaunchConfiguration('use_sim_time'),
+                 'do_hjr': LaunchConfiguration('do_hjr'),
                 }
                 
             ],

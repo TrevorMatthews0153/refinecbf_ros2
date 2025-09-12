@@ -41,16 +41,19 @@ def generate_launch_description():
             'backend', default_value='sim',
             description='sim or hardware backend for turtlebot'),
         DeclareLaunchArgument(
-            'vf_update_method', default_value='file',
+            'vf_update_method', default_value='pubsub',
             description='Message parsing method for VF update'),
         DeclareLaunchArgument(
-            'vf_update_accuracy', default_value='high',
+            'vf_update_accuracy', default_value='medium',
             description='Accuracy of HJ Reachability computation'),
+        DeclareLaunchArgument(
+            'do_hjr', default_value='True',
+            description='Whether to use HJ Reachability'),
         # DeclareLaunchArgument(
-        #     'env_config_file', default_value='env.yaml',
+        #     'env_config_file', default_value='/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml',
         #     description='Environment config file'),
         # DeclareLaunchArgument(
-        #     'control_config_file', default_value='control.yaml',
+        #     'control_config_file', default_value='/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/control.yaml',
         #     description='Control config file'),
         # DeclareLaunchArgument(
         #     'CBF_parameter_file', default_value='turtlebot_CBF_params.yaml',
@@ -124,26 +127,10 @@ def generate_launch_description():
                 'vf_update_method': LaunchConfiguration('vf_update_method'),
                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
                 'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
+                'do_hjr': LaunchConfiguration('do_hjr'),
             }.items()
         ),
-        # GroupAction(
-        #     actions=[
-        #         SetRemap('/cmd_vel', topics_config['topics']['robot_safe_control']),
 
-        #         IncludeLaunchDescription(
-        #             PythonLaunchDescriptionSource([
-        #                 PathJoinSubstitution([
-        #                     FindPackageShare('turtlebot3_fake_node'),
-        #                     'launch',
-        #                     'turtlebot3_fake_node.launch.py'
-        #                 ])
-        #             ]),
-        #                 launch_arguments={
-        #                     'use_sim_time': LaunchConfiguration('use_sim_time')
-        #                 }.items()
-        #         ),
-        #     ]
-        # )
     ])
 
 

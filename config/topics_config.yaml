@@ -10,6 +10,7 @@
       cbf_safe_control: '/safety_filter/safe_control'
       cbf_nominal_control: '/safety_filter/nominal_control'
       value_function: '/safety_filter/value_function'
+      safe_cell: '/safety_filter/safe_cell'
 
       obstacle_marker: '/visualization/obstacle_marker'
       sdf_marker: '/visualization/sdf_marker'

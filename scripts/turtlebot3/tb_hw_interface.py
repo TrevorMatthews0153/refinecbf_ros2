@@ -82,7 +82,7 @@ class TurtlebotInterface(BaseInterface):
         self.is_running = False
         self.init_subscribers()
 
-        self.last_t = time.time() # keep track of previous timestamp for acceleration control
+        self.last_t = self.get_clock().now() # keep track of previous timestamp for acceleration control
         self.current_v = 0.0 # keep track of current velocity for acceleration control
         self.current_x = None
         self.current_y = None
@@ -152,18 +152,27 @@ class TurtlebotInterface(BaseInterface):
     def process_safe_control(self, control_in_msg):
         if self.controller_type =="PD_acc":
             #compute velocity control from acceleration control
-            t = time.time()
-            dt = max(t - self.last_t, 1e-3)
+            # t = time.time()
+            # dt = max(t - self.last_t, 1/20)
+            # self.last_t = t
+            # get time stamp from control_in_msg header when available
+
+            # now = self.get_clock().now()
+            # dt = max((now - self.last_t).nanoseconds * 1e-9, 0.0)
+            # self.last_t = now
+            self.target_rate_hz = 20.0  # Hz
+            now = self.get_clock().now()  # ROS time
+            dt = 1.0/self.target_rate_hz if self.last_t is None else (now - self.last_t).nanoseconds * 1e-9
+            dt = max(min(dt, 0.2), 1.0/(self.target_rate_hz*2))  # clamp
+            self.last_t = now
+
             control_in = control_in_msg.value
             acc = control_in[0]
-            v_next = self.current_v + acc * dt
-            dv = np.clip(v_next - self.current_v, self.min_acc * dt, self.max_acc * dt)
-            v_next = self.current_v + dv
-            if v_next < self.min_vel:
-                v_next = self.min_vel
             
-            elif v_next > self.max_vel:
-                v_next = self.max_vel
+            # dv = np.clip(acc * dt, self.min_acc * dt, self.max_acc * dt) #FIXME: Should we clip the acceleration?
+            v_next = self.current_v + acc * dt
+            # v_next = self.current_v + dv
+            v_next = np.clip(v_next, self.min_vel, self.max_vel)
             
             if np.linalg.norm(control_in) == 0.0:
                 v_next = 0.0

@@ -2,10 +2,14 @@
 
 import rclpy
 from rclpy.node import Node
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 import jax
+jax.config.update("jax_platform_name", "cpu")
 import jax.numpy as jnp
 # Global flag to set a specific platform, must be used at startup.
-jax.config.update('jax_platform_name', 'cpu')
+# jax.config.update('jax_platform_name', 'cpu')
 from refinecbf_ros2.msg import ValueFunctionMsg, Array, HiLoArray
 from refinecbf_ros2.srv import ProcessState
 from example_interfaces.msg import Bool, Float32
@@ -153,13 +157,13 @@ class SafetyFilterNode(Node):
             return
         try:
             # prev update_vf.npy
-            self.back_buffer_cbf.vf_table = np.load("vf.npy").reshape(self.config.grid_shape)
+            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
         except (ValueError, EOFError):
             import time
             time.sleep(0.03)
             try:
                 # prev update_vf.npy
-                self.back_buffer_cbf.vf_table = np.load("vf.npy").reshape(self.config.grid_shape)
+                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
             except EOFError:
                 self.get_logger().warn("Value function file not found, skipping update")
                 return
@@ -208,14 +212,14 @@ class SafetyFilterNode(Node):
         self.safety_filter_solver.cbf = self.active_buffer_cbf
 
     def callback_vf_update_pubsub(self, vf_msg):
-        self.get_logger().info(f"Updating VF backbuffer, iteration: {self.number_of_HJ_updates}")
+        # self.get_logger().info(f"Updating VF backbuffer, iteration: {self.number_of_HJ_updates}")
         start_time = time.time()
         self.back_buffer_cbf.vf_table = np.array(vf_msg.vf).reshape(self.config.grid_shape) 
         self.back_buffer_cbf.vf_and_dv(np.ones(4), 0.0)  # Warmstart this
         end_time = time.time()
         self.get_logger().info(f"Time taken to update VF backbuffer: {end_time - start_time:.2f} seconds")
         with self.lock:
-            self.get_logger().info(f"Swapping buffers, iteration: {self.number_of_HJ_updates}") 
+            # self.get_logger().info(f"Swapping buffers, iteration: {self.number_of_HJ_updates}") 
             self.swap_buffers()
         if not self.initialized_safety_filter:
             self.get_logger().info("Initialized safety filter")
