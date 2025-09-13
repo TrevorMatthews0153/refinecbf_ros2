@@ -7,7 +7,6 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
-from rclpy.time import Time
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from std_msgs.msg import String
@@ -29,7 +28,6 @@ def parse_env_yaml(path):
         lo: [x_min, y_min, ...]
         hi: [x_max, y_max, ...]
         resolution: [nx, ny, ...]
-        periodic_dims: [indices]  # unused here
     """
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
@@ -40,7 +38,6 @@ def parse_env_yaml(path):
     lo = np.array(dom["lo"], dtype=np.float32)
     hi = np.array(dom["hi"], dtype=np.float32)
     res = np.array(dom["resolution"], dtype=np.int32)
-
     if not (len(lo) == len(hi) == len(res)):
         raise ValueError("lo, hi, resolution lengths must match")
 
@@ -48,15 +45,15 @@ def parse_env_yaml(path):
     return {"lo": lo, "hi": hi, "resolution": res, "axes": axes}
 
 
-def flatten_grid_rowmajor(ys: np.ndarray, xs: np.ndarray, z: float):
+def flatten_grid_column_major_like_viz(ys_desc: np.ndarray, xs_desc: np.ndarray, z: float):
     """
-    Create (Ny*Nx) Vector3 query points in row-major order:
-    outer loop over y, inner loop over x.
-    This means reshape(response, (Ny, Nx)) will align with (y,x).
+    Build query points to mirror the C++ viz node:
+      for (j = +half_y .. -half_y)     // y outer (descending)
+        for (i = +half_x .. -half_x)   // x inner (descending), x is fastest
     """
     pts = []
-    for y in ys:
-        for x in xs:
+    for y in ys_desc:
+        for x in xs_desc:
             v = Vector3()
             v.x = float(x)
             v.y = float(y)
@@ -71,23 +68,20 @@ def flatten_grid_rowmajor(ys: np.ndarray, xs: np.ndarray, z: float):
 
 class SDFServiceToGridNode(Node):
     """
-    Queries SDF GP via erl_gp_sdf_msgs/SdfQuery and publishes:
-      - ValueFunctionMsg on output_topic:     phi = sdf - var_sdf  (shape Ny x Nx, row-major → flattened col-major with .T like your node)
-      - ValueFunctionMsg on output_topic_grad_x: d/dx(phi)  (uses gradient_x if provided; else np.gradient fallback)
-      - ValueFunctionMsg on output_topic_grad_y: d/dy(phi)
-    Also publishes one JSON String with grid metadata (same keys as your pointcloud node).
-    Supports mode: 'pubsub' or 'file' (saving .npy and toggling Bool when saved).
+    Queries erl_gp_sdf_msgs/SdfQuery and publishes/saves:
+      - VF: phi = sdf - var_sdf  (NaN where var_sdf >= threshold)
+      - Gradients (service if present, else optional fallback)
     """
 
     def __init__(self):
         super().__init__("sdf_service_to_grid")
 
-        # ---- Parameters (mirrors your current node where sensible)
+        # ---- Parameters
         self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml")
         self.declare_parameter("service_name", "sdf_query")
-        self.declare_parameter("z", 0.0)                         # z plane for the query
-        self.declare_parameter("publish_rate_hz", 10.0)           # query cadence
-        self.declare_parameter("mode", "pubsub")                 # 'pubsub' or 'file'
+        self.declare_parameter("z", 0.0)
+        self.declare_parameter("publish_rate_hz", 10.0)
+        self.declare_parameter("mode", "file")  # 'pubsub' or 'file'
         self.declare_parameter("output_topic", "/env/sdf_update")
         self.declare_parameter("output_topic_grad_x", "/env/sdf_grad_x_update")
         self.declare_parameter("output_topic_grad_y", "/env/sdf_grad_y_update")
@@ -96,27 +90,43 @@ class SDFServiceToGridNode(Node):
         self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_x.npy")
         self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_y.npy")
         self.declare_parameter("use_fallback_gradient_when_missing", False)
+        # NEW: treat huge variance as invalid cell (same sentinel guard as viz node)
+        self.declare_parameter("invalid_variance_threshold", 1.0e5)
+        # NEW: mirror viz node ordering (descending, x-fast)
+        self.declare_parameter("match_viz_query_order", True)
 
         # ---- Paths
-        self.sdf_path = self.get_parameter("sdf_file_path").get_parameter_value().string_value
-        self.gx_path  = self.get_parameter("grad_x_file_path").get_parameter_value().string_value
-        self.gy_path  = self.get_parameter("grad_y_file_path").get_parameter_value().string_value
+        self.sdf_path = self.get_parameter("sdf_file_path").value
+        self.gx_path  = self.get_parameter("grad_x_file_path").value
+        self.gy_path  = self.get_parameter("grad_y_file_path").value
 
         # ---- Load env grid (x,y only)
-        env_path = self.get_parameter("env_config_path").get_parameter_value().string_value
+        env_path = self.get_parameter("env_config_path").value
         dom = parse_env_yaml(env_path)
-        self.xs = dom["axes"][0]
-        self.ys = dom["axes"][1]
-        self.Nx = int(self.xs.size)
-        self.Ny = int(self.ys.size)
+        xs_asc = dom["axes"][0]
+        ys_asc = dom["axes"][1]
+        self.Nx = int(xs_asc.size)
+        self.Ny = int(ys_asc.size)
         self.z = float(self.get_parameter("z").value)
 
+        # Match the visualization node’s descending loops (x,y from + to −)
+        if self.get_parameter("match_viz_query_order").value:
+            self.xs_for_query = xs_asc[::-1]
+            self.ys_for_query = ys_asc[::-1]
+        else:
+            self.xs_for_query = xs_asc
+            self.ys_for_query = ys_asc
+
+        # Keep convenient ascending arrays for spacing/reshapes
+        self.xs = xs_asc
+        self.ys = ys_asc
+
         # ---- Mode & pubs
-        self.mode = self.get_parameter("mode").get_parameter_value().string_value.lower()
-        out_vf_topic = self.get_parameter("output_topic").get_parameter_value().string_value
-        out_gx_topic = self.get_parameter("output_topic_grad_x").get_parameter_value().string_value
-        out_gy_topic = self.get_parameter("output_topic_grad_y").get_parameter_value().string_value
-        info_topic   = self.get_parameter("grid_info_topic").get_parameter_value().string_value
+        self.mode = self.get_parameter("mode").value.lower()
+        out_vf_topic = self.get_parameter("output_topic").value
+        out_gx_topic = self.get_parameter("output_topic_grad_x").value
+        out_gy_topic = self.get_parameter("output_topic_grad_y").value
+        info_topic   = self.get_parameter("grid_info_topic").value
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -130,7 +140,6 @@ class SDFServiceToGridNode(Node):
             self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
             self.info_pub = self.create_publisher(String, info_topic, qos)
         elif self.mode == "file":
-            # publish Bool(True) per-channel when files are written
             self.vf_pub = self.create_publisher(Bool, out_vf_topic, qos)
             self.gx_pub = self.create_publisher(Bool, out_gx_topic, qos)
             self.gy_pub = self.create_publisher(Bool, out_gy_topic, qos)
@@ -145,23 +154,26 @@ class SDFServiceToGridNode(Node):
 
         self.first_info_sent = False
         self.use_fallback_grad = bool(self.get_parameter("use_fallback_gradient_when_missing").value)
+        self.invalid_var_thresh = float(self.get_parameter("invalid_variance_threshold").value)
 
         # ---- Service client
-        self.service_name = self.get_parameter("service_name").get_parameter_value().string_value
+        self.service_name = self.get_parameter("service_name").value
         self.client = self.create_client(SdfQuery, self.service_name)
 
-        # Prebuild query points (row-major y,x)
-        self.query_pts = flatten_grid_rowmajor(self.ys, self.xs, self.z)
+        # Prebuild query points with viz-like order (y outer, x inner, both descending)
+        self.query_pts = flatten_grid_column_major_like_viz(self.ys_for_query, self.xs_for_query, self.z)
 
         # ---- Timer for periodic queries
         hz = float(self.get_parameter("publish_rate_hz").value)
         self.period = 1.0 / max(1e-6, hz)
         self.pending = False
         self.timer = self.create_timer(self.period, self._tick)
+        self._last_warn_time = None
 
         self.get_logger().info(
             f"Ready. Mode={self.mode} service='{self.service_name}' grid=({self.Ny}x{self.Nx}) "
-            f"x∈[{self.xs[0]:.2f},{self.xs[-1]:.2f}] y∈[{self.ys[0]:.2f},{self.ys[-1]:.2f}] z={self.z:.2f}"
+            f"x∈[{self.xs[0]:.2f},{self.xs[-1]:.2f}] y∈[{self.ys[0]:.2f},{self.ys[-1]:.2f}] z={self.z:.2f} "
+            f"(invalid_var_thresh={self.invalid_var_thresh:g}, match_viz_query_order={self.get_parameter('match_viz_query_order').value})"
         )
 
     # --------- Internals ----------
@@ -172,8 +184,7 @@ class SDFServiceToGridNode(Node):
 
         if not self.client.service_is_ready():
             now = self.get_clock().now()
-            if (not hasattr(self, "_last_warn_time") or
-                (now - self._last_warn_time).nanoseconds * 1e-9 > 5.0):
+            if (self._last_warn_time is None) or ((now - self._last_warn_time).nanoseconds * 1e-9 > 5.0):
                 self.get_logger().warn(f"Service '{self.service_name}' not ready")
                 self._last_warn_time = now
             return
@@ -183,7 +194,6 @@ class SDFServiceToGridNode(Node):
         self.pending = True
         fut = self.client.call_async(req)
         fut.add_done_callback(self._on_response)
-
 
     def _on_response(self, future):
         self.pending = False
@@ -199,46 +209,56 @@ class SDFServiceToGridNode(Node):
 
         n = len(res.signed_distances)
         if n != self.Nx * self.Ny:
-            self.get_logger().warn(
-                f"Response length mismatch: got {n}, expected {self.Nx*self.Ny}"
-            )
+            self.get_logger().warn(f"Response length mismatch: got {n}, expected {self.Nx*self.Ny}")
             return
 
-        # --- Extract fields
-        sdf = np.asarray(res.signed_distances, dtype=np.float32)          # shape (n,)
-        # Variances: either only SDF variance (length n) OR stacked rows (dim+1, n) when gradient variance is computed
+        # --- Extract arrays
+        sdf = np.asarray(res.signed_distances, dtype=np.float32)  # (n,)
+
+        # Variances layout: either length n (only SDF var) or stacked rows ((dim+1)*n)
         if len(res.variances) == n:
             var_sdf = np.asarray(res.variances, dtype=np.float32)
         else:
-            # interpret as (rows, n), where first row is SDF variance
             rows = (len(res.variances) // n) if n > 0 else 1
-            var_mat = np.asarray(res.variances, dtype=np.float64).reshape(rows, n)
+            var_mat = np.asarray(res.variances, dtype=np.float64).reshape(rows, n, order="F")
             var_sdf = var_mat[0, :].astype(np.float32)
 
-        # Build augmented scalar field phi = sdf - var_sdf (to match your current pipeline)
-        phi = (sdf - var_sdf).reshape(self.Ny, self.Nx)  # row-major (y,x)
+        # ----- Mask invalid (mirror viz node: treat huge variance as invalid)
+        valid = var_sdf < self.invalid_var_thresh
+        # Keep NaN where invalid so downstream can ignore
+        sdf_masked = np.where(valid, sdf, np.nan).astype(np.float32)
+        var_sdf_masked = np.where(valid, var_sdf, np.nan).astype(np.float32)
+
+        # Build augmented scalar field phi = sdf - var_sdf (NaN where invalid)
+        phi_flat = sdf_masked - var_sdf_masked  # (n,)
+        # Reshape to (Ny, Nx) *in the order we queried*
+        # We queried with y descending and x descending, x fastest; we keep (Ny,Nx) for internal work,
+        # then publish as (phi.T).ravel() to match your original topic orientation.
+        phi_grid = phi_flat.reshape(self.Ny, self.Nx)
 
         # Gradients: prefer service-provided if available
         gx_grid = None
         gy_grid = None
-        if res.compute_gradient and len(res.gradients) == n:
-            # gradients are Vector3[] of length n; reshape to (Ny, Nx)
-            gx = np.array([g.x for g in res.gradients], dtype=np.float32).reshape(self.Ny, self.Nx)
-            gy = np.array([g.y for g in res.gradients], dtype=np.float32).reshape(self.Ny, self.Nx)
-            gx_grid, gy_grid = gx, gy
+        if getattr(res, "compute_gradient", False) and len(res.gradients) == n:
+            gx = np.array([g.x for g in res.gradients], dtype=np.float32)
+            gy = np.array([g.y for g in res.gradients], dtype=np.float32)
+            # Mask invalid grads as well
+            gx = np.where(valid, gx, np.nan).astype(np.float32)
+            gy = np.where(valid, gy, np.nan).astype(np.float32)
+            gx_grid = gx.reshape(self.Ny, self.Nx)
+            gy_grid = gy.reshape(self.Ny, self.Nx)
         elif self.use_fallback_grad:
-            # Fallback: finite-diff of phi on regular grid
-            dy = float(self.ys[1] - self.ys[0]) if self.Ny > 1 else 1.0
-            dx = float(self.xs[1] - self.xs[0]) if self.Nx > 1 else 1.0
-            dVy, dVx = np.gradient(phi, dy, dx, edge_order=2)
+            # Fallback finite-diff on regular grid (use ascending spacings)
+            dy = float(abs(self.ys[1] - self.ys[0])) if self.Ny > 1 else 1.0
+            dx = float(abs(self.xs[1] - self.xs[0])) if self.Nx > 1 else 1.0
+            dVy, dVx = np.gradient(phi_grid, dy, dx, edge_order=2)
             gx_grid = dVx.astype(np.float32)
             gy_grid = dVy.astype(np.float32)
 
-        # --- Publish / Save exactly like your pointcloud node
+        # --- Publish / Save
         if self.mode == "pubsub":
-            # Flatten as (grid.T).ravel() to match your published orientation
             vf_msg = ValueFunctionMsg()
-            vf_msg.vf = (phi.T).ravel().tolist()
+            vf_msg.vf = (phi_grid.T).ravel().tolist()
             self.vf_pub.publish(vf_msg)
 
             if gx_grid is not None and gy_grid is not None:
@@ -249,46 +269,45 @@ class SDFServiceToGridNode(Node):
 
             if not self.first_info_sent:
                 self._publish_info_once()
-                # Save one snapshot (to mirror your original behavior)
-                np.save(self.sdf_path, phi.T)
+                # Snapshot saves
+                np.save(self.sdf_path, phi_grid.T)
                 if gx_grid is not None: np.save(self.gx_path, gx_grid.T)
                 if gy_grid is not None: np.save(self.gy_path, gy_grid.T)
                 self.first_info_sent = True
 
-            # Publish info once every second   
             self.get_logger().info(
                 f"Published VF {self.Nx}x{self.Ny}"
-                + (", grads published (service)" if res.compute_gradient else
-                   (", grads published (fallback)" if gx_grid is not None else ", no grads")),
+                + (", grads (service)" if getattr(res, "compute_gradient", False)
+                   else (", grads (fallback)" if gx_grid is not None else ", no grads"))
             )
 
         else:  # file mode
-            np.save(self.sdf_path, phi.T)
+            np.save(self.sdf_path, phi_grid.T)
             if gx_grid is not None: np.save(self.gx_path, gx_grid.T)
             if gy_grid is not None: np.save(self.gy_path, gy_grid.T)
             b = Bool(); b.data = True
             self.vf_pub.publish(b); self.gx_pub.publish(b); self.gy_pub.publish(b)
-            # Publish info once every second
             self.get_logger().info(
                 f"Saved VF {self.Nx}x{self.Ny}"
-                + (", grads saved (service)" if res.compute_gradient else
-                   (", grads saved (fallback)" if gx_grid is not None else ", no grads")),
+                + (", grads (service)" if getattr(res, "compute_gradient", False)
+                   else (", grads (fallback)" if gx_grid is not None else ", no grads"))
             )
 
     def _publish_info_once(self):
         if not self.info_pub:
             return
         meta = {
-            "frame_id": "map",  # unknown here; adjust if you have a known frame source
+            "frame_id": "map",
             "xmin": float(self.xs[0]), "xmax": float(self.xs[-1]),
             "ymin": float(self.ys[0]), "ymax": float(self.ys[-1]),
             "nx": int(self.Nx), "ny": int(self.Ny),
             "dx": float(self.xs[1] - self.xs[0]) if self.Nx > 1 else float("nan"),
             "dy": float(self.ys[1] - self.ys[0]) if self.Ny > 1 else float("nan"),
             "source": f"service://{self.service_name}",
-            "note": "Row-major (y,x). VF is SDF - var_sdf; gradients are of VF (service or fallback).",
+            "note": "Query order matches viz node (descending y,x). VF = SDF - var_sdf; NaNs where var_sdf >= threshold.",
         }
         self.info_pub.publish(String(data=json.dumps(meta)))
+
 
 def main():
     rclpy.init()
