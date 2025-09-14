@@ -178,7 +178,7 @@ class SDFPointCloudToGridNode(Node):
 
         # --- Parameters
         self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml")
-        self.declare_parameter("mode", "pubsub")  # "pubsub" or "file"
+        self.declare_parameter("mode", "file")  # "pubsub" or "file"
         self.declare_parameter("output_topic", "/env/sdf_update")
         self.declare_parameter("output_topic_grad_x", "/env/sdf_grad_x_update")
         self.declare_parameter("output_topic_grad_y", "/env/sdf_grad_y_update")

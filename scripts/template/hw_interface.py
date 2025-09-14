@@ -48,6 +48,7 @@ class BaseInterface(Node):
         self.declare_parameter("robot", rclpy.Parameter.Type.STRING)
         self.declare_parameter("exp", rclpy.Parameter.Type.INTEGER)
 
+        self.current_control_msg = self.control_out_msg_type()
         # Generate the update get parameters
         self.robot_state_topic = self.get_parameter("topics.robot_state").value
         cbf_state_topic = self.get_parameter("topics.cbf_state").value
@@ -69,6 +70,7 @@ class BaseInterface(Node):
     def init_subscribers(self):
         self.create_subscription(self.state_msg_type, self.robot_state_topic, self.callback_state, 1)
         self.create_subscription(Array, self.cbf_safe_control_topic, self.callback_safe_control, 1)
+        self.create_timer(1 / 30, self.publish_safe_control)
 
     def callback_state(self, state_msg):
         """
@@ -83,6 +85,10 @@ class BaseInterface(Node):
         response.response = "actions not implemented (no impact)"
         return response
 
+    def publish_safe_control(self):
+        if not self.override_safe_control():
+            self.safe_control_pub.publish(self.current_control_msg)
+
     def callback_safe_control(self, control_in_msg):
         """
         Callback for the safe control subscriber. This method should be implemented in a subclass.
@@ -91,10 +97,7 @@ class BaseInterface(Node):
         Args:
             control_msg: The incoming control message.
         """
-        control_out_msg = self.process_safe_control(control_in_msg)
-        assert isinstance(control_out_msg, self.control_out_msg_type), "Override to process the safe control message"
-        if not self.override_safe_control():
-            self.safe_control_pub.publish(control_out_msg)
+        self.current_control_msg = self.process_safe_control(control_in_msg)
 
     def process_safe_control(self, control_in_msg):
         raise NotImplementedError("Must be subclassed")

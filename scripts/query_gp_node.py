@@ -16,6 +16,12 @@ from refinecbf_ros2.msg import ValueFunctionMsg
 from geometry_msgs.msg import Vector3
 from erl_gp_sdf_msgs.srv import SdfQuery
 
+try:
+    from scipy import ndimage as _ndimg
+    _HAVE_SCIPY = True
+except Exception:
+    _HAVE_SCIPY = False
+
 
 # -------------------------
 # Helpers
@@ -61,6 +67,46 @@ def flatten_grid_column_major_like_viz(ys_desc: np.ndarray, xs_desc: np.ndarray,
             pts.append(v)
     return pts
 
+def fill_missing(grid: np.ndarray) -> np.ndarray:
+    """
+    Fill NaNs by nearest valid value (same idea as the point-cloud subscriber).
+    If SciPy is available, use EDT-based nearest neighbor; else do a few
+    4-neighbor averaging passes.
+    """
+    g = grid.copy()
+    valid = np.isfinite(g)
+    if np.all(valid):
+        return g
+
+    if _HAVE_SCIPY:
+        nearest_idx = _ndimg.distance_transform_edt(
+            ~valid, return_distances=False, return_indices=True
+        )
+        return g[tuple(nearest_idx)].astype(np.float32)
+
+    # Fallback: iterative 4-neighbor averaging (simple, robust)
+    for _ in range(5):
+        v = np.isfinite(g)
+        if np.all(v):
+            break
+        g_pad = np.pad(g, 1, mode='edge')
+        v_pad = np.pad(v, 1, mode='constant', constant_values=False)
+        neigh = [
+            (g_pad[:-2, 1:-1], v_pad[:-2, 1:-1]),
+            (g_pad[ 2:, 1:-1], v_pad[ 2:, 1:-1]),
+            (g_pad[1:-1, :-2], v_pad[1:-1, :-2]),
+            (g_pad[1:-1,  2:], v_pad[1:-1,  2:]),
+        ]
+        num = np.zeros_like(g, dtype=np.float32)
+        den = np.zeros_like(g, dtype=np.int32)
+        for c, m in neigh:
+            mc = m & np.isfinite(c)
+            num[mc] += c[mc].astype(np.float32)
+            den[mc] += 1
+        fill = (~v) & (den > 0)
+        g[fill] = (num[fill] / den[fill]).astype(np.float32)
+    return g.astype(np.float32)
+
 
 # -------------------------
 # Node
@@ -94,6 +140,9 @@ class SDFServiceToGridNode(Node):
         self.declare_parameter("invalid_variance_threshold", 1.0e5)
         # NEW: mirror viz node ordering (descending, x-fast)
         self.declare_parameter("match_viz_query_order", True)
+        # NEW: fill missing cells (NaN) by nearest valid value
+        self.declare_parameter("fill_missing", True)
+        self.fill_missing = bool(self.get_parameter("fill_missing").value)
 
         # ---- Paths
         self.sdf_path = self.get_parameter("sdf_file_path").value
@@ -235,6 +284,13 @@ class SDFServiceToGridNode(Node):
         # We queried with y descending and x descending, x fastest; we keep (Ny,Nx) for internal work,
         # then publish as (phi.T).ravel() to match your original topic orientation.
         phi_grid = phi_flat.reshape(self.Ny, self.Nx)
+        phi_grid = np.flipud(np.fliplr(phi_grid)) 
+
+        valid_mask_before_fill = np.isfinite(phi_grid)
+        if self.fill_missing and not np.all(valid_mask_before_fill):
+            phi_grid_filled = fill_missing(phi_grid)
+        else:
+            phi_grid_filled = phi_grid
 
         # Gradients: prefer service-provided if available
         gx_grid = None
@@ -251,14 +307,14 @@ class SDFServiceToGridNode(Node):
             # Fallback finite-diff on regular grid (use ascending spacings)
             dy = float(abs(self.ys[1] - self.ys[0])) if self.Ny > 1 else 1.0
             dx = float(abs(self.xs[1] - self.xs[0])) if self.Nx > 1 else 1.0
-            dVy, dVx = np.gradient(phi_grid, dy, dx, edge_order=2)
+            dVy, dVx = np.gradient(phi_grid_filled, dy, dx, edge_order=2)
             gx_grid = dVx.astype(np.float32)
             gy_grid = dVy.astype(np.float32)
 
         # --- Publish / Save
         if self.mode == "pubsub":
             vf_msg = ValueFunctionMsg()
-            vf_msg.vf = (phi_grid.T).ravel().tolist()
+            vf_msg.vf = (phi_grid_filled.T).ravel(order="C").tolist()
             self.vf_pub.publish(vf_msg)
 
             if gx_grid is not None and gy_grid is not None:
@@ -270,7 +326,7 @@ class SDFServiceToGridNode(Node):
             if not self.first_info_sent:
                 self._publish_info_once()
                 # Snapshot saves
-                np.save(self.sdf_path, phi_grid.T)
+                np.save(self.sdf_path, phi_grid_filled.T)
                 if gx_grid is not None: np.save(self.gx_path, gx_grid.T)
                 if gy_grid is not None: np.save(self.gy_path, gy_grid.T)
                 self.first_info_sent = True
@@ -282,7 +338,7 @@ class SDFServiceToGridNode(Node):
             )
 
         else:  # file mode
-            np.save(self.sdf_path, phi_grid.T)
+            np.save(self.sdf_path, phi_grid_filled.T)
             if gx_grid is not None: np.save(self.gx_path, gx_grid.T)
             if gy_grid is not None: np.save(self.gy_path, gy_grid.T)
             b = Bool(); b.data = True

@@ -105,7 +105,7 @@ class SafetyFilterNode(Node):
         self.nominal_frequency = self.get_parameter("control.nominal.frequency").value
         self.nominal_time_period = 1.0 / self.nominal_frequency
         self.get_logger().info(f"Using gamma: {gamma}, slackify: {slackify_safety_constraint}")
-        alpha = lambda x: gamma * (x - 0.1)
+        alpha = lambda x: gamma * (x - 0.2)
         self.hj_model = HJModel(grid=self.grid, grid_values=None) # Updated from None
         self.hj_model_back = HJModel(grid=self.grid, grid_values=None) # Updated from None
         self.get_logger().info(f"control space: {self.dynamics.control_space}")
@@ -141,6 +141,7 @@ class SafetyFilterNode(Node):
         self.state_associated_with_vf_pub = self.create_publisher(Array, '/debugging/state', 1)
         self.control_associated_with_vf_pub = self.create_publisher(Array, '/debugging/safe_control', 1)
         self.nominal_control_associated_with_vf_pub = self.create_publisher(Array, '/debugging/nominal_control', 1)
+        self.safety_filter_time_publisher = self.create_publisher(Float32, 'safety_filter_time', 1)
 
         self.safety_filter_active = self.get_parameter("safety_filter_active").value
         if self.safety_filter_active:
@@ -254,6 +255,10 @@ class SafetyFilterNode(Node):
                 self.state_associated_with_vf_pub.publish(Array(value=curr_state.tolist()))
                 self.control_associated_with_vf_pub.publish(Array(value=safety_filter_tuple[0].tolist()))
                 self.nominal_control_associated_with_vf_pub.publish(Array(value=nom_control_active.tolist()))
+                end_time = time.time()
+                time_taken = end_time - start_time
+                # TM, MK: NEw topic to publish
+                self.safety_filter_time_publisher.publish(Float32(data=time_taken))
             safety_control = nom_control.copy()
 
             # self.get_logger().info(f"Safety control: {safety_filter_tuple[0]}")

@@ -77,16 +77,23 @@ class TurtlebotInterface(BaseInterface):
 
         self.goal_reached_pub = self.create_publisher(Bool, "goal_reached", 10)
         self.goal_distance_pub = self.create_publisher(Float32, "distance_to_goal", 10)
-        self.create_subscription(Array, "current_goal", self._cb_current_goal, 10)
+        self.desired_velocity_pub = self.create_publisher(Float32, "desired_velocity", 10)
+        # self.dt_pub = self.create_publisher(Float32, "dt", 10)
+        # self.dt_actual_pub = self.create_publisher(Float32, "dt_actual", 10)
+        self.actual_velocity_pub = self.create_publisher(Float32, "actual_velocity", 1)
+        self.create_subscription(Array, "current_goal", self._cb_current_goal, 1)
 
         self.is_running = False
         self.init_subscribers()
 
-        self.last_t = self.get_clock().now() # keep track of previous timestamp for acceleration control
+        self.last_t = time.time()
         self.current_v = 0.0 # keep track of current velocity for acceleration control
+        self.desired_v = 0.0
         self.current_x = None
         self.current_y = None
         self.current_yaw = None
+
+        self.started_moving = False
 
         self._goal_ack_sent = False
 
@@ -136,9 +143,10 @@ class TurtlebotInterface(BaseInterface):
         self.current_x = state_in_msg.pose.pose.position.x
         self.current_y = state_in_msg.pose.pose.position.y
         self.current_yaw = yaw
-        self.current_v = v
+        self.current_v = self.desired_v 
+        self.actual_velocity_pub.publish(Float32(data=v))
         state_out_msg = Array()
-        state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw, v]
+        state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw, self.desired_v]
         self.state_pub.publish(state_out_msg)
         if self.target is not None and np.isfinite(self.current_x) and np.isfinite(self.current_y):
             dist = float(np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2]))
@@ -152,35 +160,56 @@ class TurtlebotInterface(BaseInterface):
     def process_safe_control(self, control_in_msg):
         if self.controller_type =="PD_acc":
             #compute velocity control from acceleration control
-            # t = time.time()
-            # dt = max(t - self.last_t, 1/20)
+            # t = time.time()  # TODO MK: Use ROS TIME
+            # dt = np.clip(t - self.last_t, 1/45, 1/15)
+            # actual_dt = t - self.last_t
+            # dt = max(t - self.last_t, 1/35)
+            dt = 1 / 50
             # self.last_t = t
             # get time stamp from control_in_msg header when available
 
             # now = self.get_clock().now()
             # dt = max((now - self.last_t).nanoseconds * 1e-9, 0.0)
             # self.last_t = now
-            self.target_rate_hz = 20.0  # Hz
-            now = self.get_clock().now()  # ROS time
-            dt = 1.0/self.target_rate_hz if self.last_t is None else (now - self.last_t).nanoseconds * 1e-9
-            dt = max(min(dt, 0.2), 1.0/(self.target_rate_hz*2))  # clamp
-            self.last_t = now
+            # self.target_rate_hz = 20.0  # Hz
+            # now = self.steady.now()
+            # dt = (now - self.last_t).nanoseconds * 1e-9
 
+            # self.get_logger().info(f"Current dt: {dt:.4f} seconds !!!!!!!!!!!!!!!!!!!!!")
+            # # clamp dt between 15-35 Hz
+            # dt = np.clip(dt, 1/35, 1/15)
+            # dt = 1 / 20.0  # seconds
+            # dt = 1.0/self.target_rate_hz if self.last_t is None else (now - self.last_t).nanoseconds * 1e-9
+            # dt = max(min(dt, 0.2), 1.0/(self.target_rate_hz*2))  # clamp
+            # self.last_t = now
+            # self.get_logger().info(f"Using dt: {dt:.4f} seconds !!!!!!!!!!!!!!!!!!!!!"
+            # self.dt_pub.publish(Float32(data=dt))
+            # self.dt_actual_pub.publish(Float32(data=actual_dt))
             control_in = control_in_msg.value
             acc = control_in[0]
-            
-            # dv = np.clip(acc * dt, self.min_acc * dt, self.max_acc * dt) #FIXME: Should we clip the acceleration?
+            # self.get_logger().info(f"Control acc: {acc}")
+            #dv = np.clip(acc * dt, self.min_acc * dt, self.max_acc * dt) #FIXME: Should we clip the acceleration?
+            self.desired_v += acc * dt
+            self.desired_v = np.clip(self.desired_v, self.min_vel, self.max_vel)
+            self.desired_velocity_pub.publish(Float32(data=self.desired_v))
             v_next = self.current_v + acc * dt
             # v_next = self.current_v + dv
             v_next = np.clip(v_next, self.min_vel, self.max_vel)
-            
-            if np.linalg.norm(control_in) == 0.0:
-                v_next = 0.0
 
+            # self.get_logger().info(f"Delta time: {dt}, Current vel: {self.current_v}, Control acc: {acc}, Next vel: {self.desired_v}!!!!!!!!!!")
+            if not self.started_moving:
+                if np.linalg.norm(control_in) > 0.0:
+                    self.started_moving = True
+                else:
+                    v_next = 0.0
+                    self.desired_v = 0.0
+            
+            # self.get_logger().info(f"Control acc: {acc}, Current vel: {self.current_v}, Next vel: {v_next}, dv: {dv}, dt: {dt}")
             control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = v_next  # FIXME: Ideally self.min_vel
+            control_out_msg.linear.x = self.desired_v  #v_next  # FIXME: Ideally self.min_vel
             control_out_msg.linear.y = 0.0
             control_out_msg.linear.z = 0.0
+
         else:
             control_in = control_in_msg.value
             control_out_msg = self.control_out_msg_type()
