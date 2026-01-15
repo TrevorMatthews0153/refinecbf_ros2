@@ -41,9 +41,3 @@ class NominalPolicy:
     def save_measurements(self, state, control, time):
         return {"dist_to_goal": np.linalg.norm(state[..., :2] - self.ctrl.target[:2], axis=-1)}
 
-                # self.nominal_policy = lambda x,t: np.clip(
-        #         [[
-        #           Kp*(np.linalg.norm(self.target[0:2]-x[0:2])),
-        #           Kw*np.arctan2(np.cos(x[2])*-(x[0]-self.target[0])+np.sin(x[2])*-(x[1]-self.target[1]),-np.sin(x[2])*-(x[0]-self.target[0])+np.cos(x[2])*-(x[1]-self.target[1]))
-        #         ]], 
-        #     self.umin, self.umax)

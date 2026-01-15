@@ -105,7 +105,7 @@ class SafetyFilterNode(Node):
         self.nominal_frequency = self.get_parameter("control.nominal.frequency").value
         self.nominal_time_period = 1.0 / self.nominal_frequency
         self.get_logger().info(f"Using gamma: {gamma}, slackify: {slackify_safety_constraint}")
-        alpha = lambda x: gamma * (x - 0.2)
+        alpha = lambda x: gamma * (x)
         self.hj_model = HJModel(grid=self.grid, grid_values=None) # Updated from None
         self.hj_model_back = HJModel(grid=self.grid, grid_values=None) # Updated from None
         self.get_logger().info(f"control space: {self.dynamics.control_space}")
@@ -157,14 +157,21 @@ class SafetyFilterNode(Node):
         if not vf_msg.data:
             return
         try:
-            # prev update_vf.npy
-            self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+            try:
+                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+            except ValueError:
+                self.get_logger().warn("Value function file has incorrect shape, skipping update")
+                return
         except (ValueError, EOFError):
             import time
             time.sleep(0.03)
             try:
-                # prev update_vf.npy
-                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+
+                try:
+                    self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+                except ValueError:
+                    self.get_logger().warn("Value function file has incorrect shape, skipping update")
+                    return
             except EOFError:
                 self.get_logger().warn("Value function file not found, skipping update")
                 return

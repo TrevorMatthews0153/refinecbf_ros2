@@ -9,7 +9,7 @@ from launch.substitutions import LaunchConfiguration, TextSubstitution
 from launch.conditions import IfCondition
 
 package_name = 'refinecbf_ros2'
-
+# TODO: Clean up and add necessary addtional arguements.
 def generate_launch_description():
     topics_config = os.path.join(get_package_share_directory(package_name), 'config', 'topics_config.yaml')
 
@@ -41,6 +41,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'do_hjr', default_value='True',
             description='Whether to use HJ Reachability'),
+        DeclareLaunchArgument(
+            'save_cbf', default_value='False',
+            description='Whether to save CBF after every goal'),
 
 
         Node(
@@ -58,18 +61,6 @@ def generate_launch_description():
                  }
             ]),
 
-        # Node(
-        #     package='refinecbf_ros2',
-        #     executable='obstacle_node.py',
-        #     output='screen',
-        #     parameters=[topics_config,
-        #                 {'robot': LaunchConfiguration('robot'),
-        #                  'vf_update_method': LaunchConfiguration('vf_update_method'),
-        #                  'exp': LaunchConfiguration('exp'),
-        #                  'use_sim_time': LaunchConfiguration('use_sim_time'),
-        #                  },
-        #                 ]
-        # ),
         Node(
             package='refinecbf_ros2',
             executable='hj_reachability_node.py',
@@ -85,6 +76,7 @@ def generate_launch_description():
                  'exp': LaunchConfiguration('exp'),
                  'use_sim_time': LaunchConfiguration('use_sim_time'),
                  'do_hjr': LaunchConfiguration('do_hjr'),
+                 'save_cbf': LaunchConfiguration('save_cbf'),
                 }
                 
             ],

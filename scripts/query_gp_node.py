@@ -67,6 +67,7 @@ def flatten_grid_column_major_like_viz(ys_desc: np.ndarray, xs_desc: np.ndarray,
             pts.append(v)
     return pts
 
+
 def fill_missing(grid: np.ndarray) -> np.ndarray:
     """
     Fill NaNs by nearest valid value (same idea as the point-cloud subscriber).
@@ -122,7 +123,7 @@ class SDFServiceToGridNode(Node):
     def __init__(self):
         super().__init__("sdf_service_to_grid")
 
-        # ---- Parameters
+        # ---- Parameters (declare)
         self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml")
         self.declare_parameter("service_name", "sdf_query")
         self.declare_parameter("z", 0.0)
@@ -136,84 +137,75 @@ class SDFServiceToGridNode(Node):
         self.declare_parameter("grad_x_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_x.npy")
         self.declare_parameter("grad_y_file_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/curr_grad_y.npy")
         self.declare_parameter("use_fallback_gradient_when_missing", False)
-        # NEW: treat huge variance as invalid cell (same sentinel guard as viz node)
+        self.declare_parameter("default_invalid_sdf", -0.005)  # must match GP setting
         self.declare_parameter("invalid_variance_threshold", 1.0e5)
-        # NEW: mirror viz node ordering (descending, x-fast)
         self.declare_parameter("match_viz_query_order", True)
-        # NEW: fill missing cells (NaN) by nearest valid value
         self.declare_parameter("fill_missing", True)
-        self.fill_missing = bool(self.get_parameter("fill_missing").value)
+        self.declare_parameter("save_sdf", False)
 
-        # ---- Paths
+        # ---- Parameters (read)
+        env_path = self.get_parameter("env_config_path").value
+        self.service_name = self.get_parameter("service_name").value
+        self.z = float(self.get_parameter("z").value)
+        hz = float(self.get_parameter("publish_rate_hz").value)
+        self.mode = self.get_parameter("mode").value.lower()
+
+        out_vf_topic = self.get_parameter("output_topic").value
+        out_gx_topic = self.get_parameter("output_topic_grad_x").value
+        out_gy_topic = self.get_parameter("output_topic_grad_y").value
+        info_topic   = self.get_parameter("grid_info_topic").value
+
         self.sdf_path = self.get_parameter("sdf_file_path").value
         self.gx_path  = self.get_parameter("grad_x_file_path").value
         self.gy_path  = self.get_parameter("grad_y_file_path").value
 
+        self.use_fallback_grad = bool(self.get_parameter("use_fallback_gradient_when_missing").value)
+        self.default_invalid_sdf = float(self.get_parameter("default_invalid_sdf").value)
+        self.invalid_var_thresh = float(self.get_parameter("invalid_variance_threshold").value)
+        match_viz_query_order = bool(self.get_parameter("match_viz_query_order").value)
+        self.fill_missing = bool(self.get_parameter("fill_missing").value)
+
+        self.save_sdf = bool(self.get_parameter("save_sdf").value)
+        self.current_goals_reached = 0
+        self.save_dir = "/root/ros2_ws/noise_and_range_experiments/low_range_high_noise"
+
+        if self.save_sdf:
+            self.goal_reached_sub = self.create_subscription(Bool, "goal_reached", self.goal_reached_cb, 1)
+
         # ---- Load env grid (x,y only)
-        env_path = self.get_parameter("env_config_path").value
         dom = parse_env_yaml(env_path)
         xs_asc = dom["axes"][0]
         ys_asc = dom["axes"][1]
         self.Nx = int(xs_asc.size)
         self.Ny = int(ys_asc.size)
-        self.z = float(self.get_parameter("z").value)
 
-        # Match the visualization node’s descending loops (x,y from + to −)
-        if self.get_parameter("match_viz_query_order").value:
+        if match_viz_query_order:
             self.xs_for_query = xs_asc[::-1]
             self.ys_for_query = ys_asc[::-1]
         else:
             self.xs_for_query = xs_asc
             self.ys_for_query = ys_asc
 
-        # Keep convenient ascending arrays for spacing/reshapes
         self.xs = xs_asc
         self.ys = ys_asc
 
-        # ---- Mode & pubs
-        self.mode = self.get_parameter("mode").value.lower()
-        out_vf_topic = self.get_parameter("output_topic").value
-        out_gx_topic = self.get_parameter("output_topic_grad_x").value
-        out_gy_topic = self.get_parameter("output_topic_grad_y").value
-        info_topic   = self.get_parameter("grid_info_topic").value
-
+        # ---- Publishers (factored helper)
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
         )
-
-        if self.mode == "pubsub":
-            self.vf_pub = self.create_publisher(ValueFunctionMsg, out_vf_topic, qos)
-            self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
-            self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
-            self.info_pub = self.create_publisher(String, info_topic, qos)
-        elif self.mode == "file":
-            self.vf_pub = self.create_publisher(Bool, out_vf_topic, qos)
-            self.gx_pub = self.create_publisher(Bool, out_gx_topic, qos)
-            self.gy_pub = self.create_publisher(Bool, out_gy_topic, qos)
-            self.info_pub = None
-        else:
-            self.get_logger().warn(f"Unknown mode '{self.mode}', defaulting to 'pubsub'")
-            self.mode = "pubsub"
-            self.vf_pub = self.create_publisher(ValueFunctionMsg, out_vf_topic, qos)
-            self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
-            self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
-            self.info_pub = self.create_publisher(String, info_topic, qos)
+        self._create_publishers(self.mode, out_vf_topic, out_gx_topic, out_gy_topic, info_topic, qos)
 
         self.first_info_sent = False
-        self.use_fallback_grad = bool(self.get_parameter("use_fallback_gradient_when_missing").value)
-        self.invalid_var_thresh = float(self.get_parameter("invalid_variance_threshold").value)
 
         # ---- Service client
-        self.service_name = self.get_parameter("service_name").value
         self.client = self.create_client(SdfQuery, self.service_name)
 
         # Prebuild query points with viz-like order (y outer, x inner, both descending)
         self.query_pts = flatten_grid_column_major_like_viz(self.ys_for_query, self.xs_for_query, self.z)
 
-        # ---- Timer for periodic queries
-        hz = float(self.get_parameter("publish_rate_hz").value)
+        # ---- Timer
         self.period = 1.0 / max(1e-6, hz)
         self.pending = False
         self.timer = self.create_timer(self.period, self._tick)
@@ -222,8 +214,31 @@ class SDFServiceToGridNode(Node):
         self.get_logger().info(
             f"Ready. Mode={self.mode} service='{self.service_name}' grid=({self.Ny}x{self.Nx}) "
             f"x∈[{self.xs[0]:.2f},{self.xs[-1]:.2f}] y∈[{self.ys[0]:.2f},{self.ys[-1]:.2f}] z={self.z:.2f} "
-            f"(invalid_var_thresh={self.invalid_var_thresh:g}, match_viz_query_order={self.get_parameter('match_viz_query_order').value})"
+            f"(invalid_var_thresh={self.invalid_var_thresh:g}, match_viz_query_order={match_viz_query_order})"
         )
+
+    def _create_publishers(self, mode, out_vf_topic, out_gx_topic, out_gy_topic, info_topic, qos):
+        """
+        Create publishers based on mode.
+        This is a cleanup-only helper to remove repetition.
+        """
+        if mode == "pubsub":
+            self.vf_pub = self.create_publisher(ValueFunctionMsg, out_vf_topic, qos)
+            self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
+            self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
+            self.info_pub = self.create_publisher(String, info_topic, qos)
+        elif mode == "file":
+            self.vf_pub = self.create_publisher(Bool, out_vf_topic, qos)
+            self.gx_pub = self.create_publisher(Bool, out_gx_topic, qos)
+            self.gy_pub = self.create_publisher(Bool, out_gy_topic, qos)
+            self.info_pub = None
+        else:
+            self.get_logger().warn(f"Unknown mode '{mode}', defaulting to 'pubsub'")
+            self.mode = "pubsub"
+            self.vf_pub = self.create_publisher(ValueFunctionMsg, out_vf_topic, qos)
+            self.gx_pub = self.create_publisher(ValueFunctionMsg, out_gx_topic, qos)
+            self.gy_pub = self.create_publisher(ValueFunctionMsg, out_gy_topic, qos)
+            self.info_pub = self.create_publisher(String, info_topic, qos)
 
     # --------- Internals ----------
 
@@ -274,17 +289,18 @@ class SDFServiceToGridNode(Node):
 
         # ----- Mask invalid (mirror viz node: treat huge variance as invalid)
         valid = var_sdf < self.invalid_var_thresh
+        invalid_sdf_mask = sdf == self.default_invalid_sdf
         # Keep NaN where invalid so downstream can ignore
         sdf_masked = np.where(valid, sdf, np.nan).astype(np.float32)
         var_sdf_masked = np.where(valid, var_sdf, np.nan).astype(np.float32)
 
         # Build augmented scalar field phi = sdf - var_sdf (NaN where invalid)
-        phi_flat = sdf_masked - var_sdf_masked  # (n,)
+        phi_flat = sdf_masked - 2 * np.sqrt(var_sdf_masked)  # (n,)
         # Reshape to (Ny, Nx) *in the order we queried*
         # We queried with y descending and x descending, x fastest; we keep (Ny,Nx) for internal work,
         # then publish as (phi.T).ravel() to match your original topic orientation.
         phi_grid = phi_flat.reshape(self.Ny, self.Nx)
-        phi_grid = np.flipud(np.fliplr(phi_grid)) 
+        phi_grid = np.flipud(np.fliplr(phi_grid))
 
         valid_mask_before_fill = np.isfinite(phi_grid)
         if self.fill_missing and not np.all(valid_mask_before_fill):
@@ -292,6 +308,7 @@ class SDFServiceToGridNode(Node):
         else:
             phi_grid_filled = phi_grid
 
+        phi_grid_filled[invalid_sdf_mask.reshape(self.Ny, self.Nx)] = self.default_invalid_sdf
         # Gradients: prefer service-provided if available
         gx_grid = None
         gy_grid = None
@@ -363,6 +380,13 @@ class SDFServiceToGridNode(Node):
             "note": "Query order matches viz node (descending y,x). VF = SDF - var_sdf; NaNs where var_sdf >= threshold.",
         }
         self.info_pub.publish(String(data=json.dumps(meta)))
+
+    def goal_reached_cb(self, msg):
+        if msg.data and self.save_sdf:
+            self.get_logger().info("Goal reached, saving SDF")
+            self.current_goals_reached += 1
+            np.save(f"{self.save_dir}/goal_{self.current_goals_reached}.npy", np.load(self.sdf_path))
+            self.get_logger().info(f"Saved SDF to {self.save_dir}/goal_{self.current_goals_reached}_sdf.npy")
 
 
 def main():

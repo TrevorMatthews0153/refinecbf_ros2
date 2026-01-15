@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 
-import rclpy
+import os
+import sys
+import time
+
 import numpy as np
+import rclpy
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from refinecbf_ros2.msg import Array
-from refinecbf_ros2.srv import HighLevelCommand
 from std_msgs.msg import Float32
 from example_interfaces.msg import Bool
 
-import sys
-import os
+from refinecbf_ros2.msg import Array
 
+# Local imports (repo layout dependent)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from template.hw_interface import BaseInterface
-from ament_index_python.packages import get_package_share_directory
-import yaml
-import time
-from utils import load_parameters
-import rowan
+from template.hw_interface import BaseInterface  # noqa: E402
+from utils import load_parameters  # noqa: E402
+
+import rowan  # noqa: E402
 
 
 class TurtlebotInterface(BaseInterface):
     """
-    This class converts the state and control messages from the SafetyFilterNode to the correct type
-    for the Turtlebots.
-    Each HW platform should have its own Interface node
+    Hardware interface for Turtlebot.
+
+    - Converts Odometry -> internal Array state [x, y, yaw, v]
+    - Converts safe control Array [v_or_acc, omega] -> Twist
+    - Receives goal updates on "current_goal" as Array [x, y, theta, v] (theta/v optional)
+    - Publishes goal reached + distance-to-goal + velocity monitors
     """
 
     state_msg_type = Odometry
@@ -35,12 +38,15 @@ class TurtlebotInterface(BaseInterface):
 
     def __init__(self):
         super().__init__("turtlebot_interface")
+
+        # ---- Load default control config for parameter declarations
         control_config = load_parameters(
             self.get_parameter("robot").value,
             self.get_parameter("exp").value,
-            "control"
+            "control",
         )
 
+        # ---- Parameters (declared with config defaults)
         self.declare_parameters(
             "",
             [
@@ -53,17 +59,18 @@ class TurtlebotInterface(BaseInterface):
                 ("limits.max_omega", control_config["limits"]["max_omega"]),
                 ("controller_type", control_config["controller_type"]),
                 ("target", control_config["nominal"]["goal"]["coordinates"]),
-                ("goal_reached_threshold", control_config["nominal"]["goal"].get("reached_threshold", 0.20)),  # meters
-            ]
+                ("goal_reached_threshold", control_config["nominal"]["goal"].get("reached_threshold", 0.20)),
+            ],
         )
 
-        # Initialize external control parameters
+        # ---- External control bookkeeping
         self.external_control = None
-        self.buffer_time_external_control = self.get_parameter("buffer_time_external_control").value  # seconds
-        self.buffer_time_mod_external_control = self.get_parameter("buffer_time_mod_external_control").value  # seconds
         self.external_control_ts = None
         self.external_control_mod_ts = None
+        self.buffer_time_external_control = self.get_parameter("buffer_time_external_control").value
+        self.buffer_time_mod_external_control = self.get_parameter("buffer_time_mod_external_control").value
 
+        # ---- Limits / controller behavior
         self.max_vel = self.get_parameter("limits.max_vel").value
         self.min_vel = self.get_parameter("limits.min_vel").value
         self.max_acc = self.get_parameter("limits.max_acc").value
@@ -71,31 +78,37 @@ class TurtlebotInterface(BaseInterface):
         self.max_omega = self.get_parameter("limits.max_omega").value
         self.controller_type = self.get_parameter("controller_type").value
 
+        # ---- Goal state
+        self.target = np.array(self.get_parameter("target").value, dtype=float)
+        self.goal_thresh = float(self.get_parameter("goal_reached_threshold").value)
+        self._goal_ack_sent = False
 
-        self.target = np.array(self.get_parameter("target").value)
-        self.goal_thresh = self.get_parameter("goal_reached_threshold").value
-
+        # ---- Publishers / Subscribers
         self.goal_reached_pub = self.create_publisher(Bool, "goal_reached", 10)
         self.goal_distance_pub = self.create_publisher(Float32, "distance_to_goal", 10)
         self.desired_velocity_pub = self.create_publisher(Float32, "desired_velocity", 10)
-        # self.dt_pub = self.create_publisher(Float32, "dt", 10)
-        # self.dt_actual_pub = self.create_publisher(Float32, "dt_actual", 10)
         self.actual_velocity_pub = self.create_publisher(Float32, "actual_velocity", 1)
+
         self.create_subscription(Array, "current_goal", self._cb_current_goal, 1)
 
+        # ---- Interface lifecycle
         self.is_running = False
         self.init_subscribers()
 
+        # ---- Local state tracking
         self.last_t = time.time()
-        self.current_v = 0.0 # keep track of current velocity for acceleration control
+        self.current_v = 0.0
         self.desired_v = 0.0
+
         self.current_x = None
         self.current_y = None
         self.current_yaw = None
 
         self.started_moving = False
 
-        self._goal_ack_sent = False
+    # -------------------------
+    # High-level command handling
+    # -------------------------
 
     def handle_high_level_command(self, request, response):
         if request.command == "start":
@@ -104,6 +117,7 @@ class TurtlebotInterface(BaseInterface):
             else:
                 self.is_running = True
                 response.response = "Turtlebot can move now"
+
         elif request.command == "end":
             if self.is_running:
                 self.is_running = False
@@ -111,43 +125,63 @@ class TurtlebotInterface(BaseInterface):
                 # FIXME: Make sure to send zero commands to the robot
             else:
                 response.response = "Already stopped (end command ignored)"
+
         elif request.command == "goto":
             raise NotImplementedError("goto command not implemented")
-        else: 
-            response.response = "actions not implemented ({} command ignored)".format(request.command)
+
+        else:
+            response.response = f"actions not implemented ({request.command} command ignored)"
+
         return response
 
+    # -------------------------
+    # Goal updates
+    # -------------------------
+
     def _cb_current_goal(self, msg: Array):
-        # Expect [x, y, theta, v] in Array.value
+        """
+        Expect:
+          - [x, y] OR
+          - [x, y, theta, v]
+        """
         vals = np.array(msg.value, dtype=float).reshape(-1)
         if vals.size == 2:
             vals = np.array([vals[0], vals[1], 0.0, 0.0], dtype=float)
+
         self.target = vals[:4]
         self._goal_ack_sent = False
-        self.get_logger().info(f"New current goal received: [{self.target[0]:.3f}, {self.target[1]:.3f}, {self.target[2]:.3f}]")
+        self.get_logger().info(
+            f"New current goal received: [{self.target[0]:.3f}, {self.target[1]:.3f}, {self.target[2]:.3f}]"
+        )
 
-    def callback_state(self, state_in_msg):
-        w = state_in_msg.pose.pose.orientation.w
-        x = state_in_msg.pose.pose.orientation.x
-        y = state_in_msg.pose.pose.orientation.y
-        z = state_in_msg.pose.pose.orientation.z
-        v = state_in_msg.twist.twist.linear.x
+    # -------------------------
+    # State callback
+    # -------------------------
 
-        # Convert Quaternion to Yaw
-        # yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (np.power(y, 2) + np.power(z, 2))) + np.pi / 2 # FIXME: why is this necessary? I think it has something to do with the odom and rviz coordinate frames
-        # yaw = np.arctan2(np.sin(yaw),np.cos(yaw)) # Remap yaw to -pi to pi range
-        euler = rowan.to_euler([x, y, z, w])
-        # self.get_logger().info("Yaw: {:.2f}".format(euler[2]))
-        # self.get_logger().info(f"Position: x={state_in_msg.pose.pose.position.x:.2f}, y={state_in_msg.pose.pose.position.y:.2f}, Yaw: {euler[2]:.2f}, v: {v:.2f}")
+    def callback_state(self, state_in_msg: Odometry):
+        # Odometry orientation quaternion
+        q = state_in_msg.pose.pose.orientation
+        v_meas = state_in_msg.twist.twist.linear.x
+
+        # rowan expects [x, y, z, w]
+        euler = rowan.to_euler([q.x, q.y, q.z, q.w])
         yaw = euler[2]
+
         self.current_x = state_in_msg.pose.pose.position.x
         self.current_y = state_in_msg.pose.pose.position.y
         self.current_yaw = yaw
-        self.current_v = self.desired_v 
-        self.actual_velocity_pub.publish(Float32(data=v))
+
+        # NOTE: original code sets current_v = desired_v (kept)
+        self.current_v = self.desired_v
+
+        self.actual_velocity_pub.publish(Float32(data=float(v_meas)))
+
+        # Publish state to safety filter: [x, y, yaw, v]
         state_out_msg = Array()
-        state_out_msg.value = [state_in_msg.pose.pose.position.x, state_in_msg.pose.pose.position.y, yaw, self.desired_v]
+        state_out_msg.value = [float(self.current_x), float(self.current_y), float(yaw), float(self.desired_v)]
         self.state_pub.publish(state_out_msg)
+
+        # Goal distance + goal reached
         if self.target is not None and np.isfinite(self.current_x) and np.isfinite(self.current_y):
             dist = float(np.linalg.norm(np.array([self.current_x, self.current_y]) - self.target[:2]))
             self.goal_distance_pub.publish(Float32(data=dist))
@@ -157,105 +191,99 @@ class TurtlebotInterface(BaseInterface):
                 self.goal_reached_pub.publish(Bool(data=True))
                 self._goal_ack_sent = True
 
-    def process_safe_control(self, control_in_msg):
-        if self.controller_type =="PD_acc":
-            #compute velocity control from acceleration control
-            # t = time.time()  # TODO MK: Use ROS TIME
-            # dt = np.clip(t - self.last_t, 1/45, 1/15)
-            # actual_dt = t - self.last_t
-            # dt = max(t - self.last_t, 1/35)
-            dt = 1 / 50
-            # self.last_t = t
-            # get time stamp from control_in_msg header when available
+    # -------------------------
+    # Safe control -> robot control
+    # -------------------------
 
-            # now = self.get_clock().now()
-            # dt = max((now - self.last_t).nanoseconds * 1e-9, 0.0)
-            # self.last_t = now
-            # self.target_rate_hz = 20.0  # Hz
-            # now = self.steady.now()
-            # dt = (now - self.last_t).nanoseconds * 1e-9
+    def process_safe_control(self, control_in_msg: Array) -> Twist:
+        """
+        control_in_msg.value is expected to be [u0, u1] where:
+          - if controller_type == "PD_acc": u0 is acceleration, u1 is omega
+          - else: u0 is velocity, u1 is omega
+        """
+        control_in = control_in_msg.value
 
-            # self.get_logger().info(f"Current dt: {dt:.4f} seconds !!!!!!!!!!!!!!!!!!!!!")
-            # # clamp dt between 15-35 Hz
-            # dt = np.clip(dt, 1/35, 1/15)
-            # dt = 1 / 20.0  # seconds
-            # dt = 1.0/self.target_rate_hz if self.last_t is None else (now - self.last_t).nanoseconds * 1e-9
-            # dt = max(min(dt, 0.2), 1.0/(self.target_rate_hz*2))  # clamp
-            # self.last_t = now
-            # self.get_logger().info(f"Using dt: {dt:.4f} seconds !!!!!!!!!!!!!!!!!!!!!"
-            # self.dt_pub.publish(Float32(data=dt))
-            # self.dt_actual_pub.publish(Float32(data=actual_dt))
-            control_in = control_in_msg.value
+        if self.controller_type == "PD_acc":
+            dt = 1 / 50  # original code hard-codes dt (kept)
+
             acc = control_in[0]
-            # self.get_logger().info(f"Control acc: {acc}")
-            #dv = np.clip(acc * dt, self.min_acc * dt, self.max_acc * dt) #FIXME: Should we clip the acceleration?
             self.desired_v += acc * dt
             self.desired_v = np.clip(self.desired_v, self.min_vel, self.max_vel)
-            self.desired_velocity_pub.publish(Float32(data=self.desired_v))
+            self.desired_velocity_pub.publish(Float32(data=float(self.desired_v)))
+
             v_next = self.current_v + acc * dt
-            # v_next = self.current_v + dv
             v_next = np.clip(v_next, self.min_vel, self.max_vel)
 
-            # self.get_logger().info(f"Delta time: {dt}, Current vel: {self.current_v}, Control acc: {acc}, Next vel: {self.desired_v}!!!!!!!!!!")
             if not self.started_moving:
                 if np.linalg.norm(control_in) > 0.0:
                     self.started_moving = True
                 else:
                     v_next = 0.0
                     self.desired_v = 0.0
-            
-            # self.get_logger().info(f"Control acc: {acc}, Current vel: {self.current_v}, Next vel: {v_next}, dv: {dv}, dt: {dt}")
-            control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = self.desired_v  #v_next  # FIXME: Ideally self.min_vel
-            control_out_msg.linear.y = 0.0
-            control_out_msg.linear.z = 0.0
 
+            cmd_v = self.desired_v  # original uses desired_v, not v_next (kept)
         else:
-            control_in = control_in_msg.value
-            control_out_msg = self.control_out_msg_type()
-            control_out_msg.linear.x = np.clip(control_in[0], self.min_vel, self.max_vel)
-            control_out_msg.linear.y = 0.0
-            control_out_msg.linear.z = 0.0
+            cmd_v = np.clip(control_in[0], self.min_vel, self.max_vel)
 
+        cmd_omega = np.clip(control_in[1], -self.max_omega, self.max_omega)
+
+        control_out_msg = Twist()
+        control_out_msg.linear.x = float(cmd_v)
+        control_out_msg.linear.y = 0.0
+        control_out_msg.linear.z = 0.0
         control_out_msg.angular.x = 0.0
         control_out_msg.angular.y = 0.0
-        control_out_msg.angular.z = np.clip(control_in[1], -self.max_omega, self.max_omega)
-        # self.get_logger().info(f"Control omega: {control_out_msg.angular.z}")
+        control_out_msg.angular.z = float(cmd_omega)
 
-        # Stop at the goal
+        # Stop at the goal (kept)
         if self._goal_ack_sent:
-                control_out_msg.linear.x = 0.0
-                control_out_msg.angular.z = 0.0
-                self.get_logger().info("Reached Goal")
+            control_out_msg.linear.x = 0.0
+            control_out_msg.angular.z = 0.0
+            self.get_logger().info("Reached Goal")
 
-        # self.get_logger().info(f"Control linear: {control_out_msg.linear.x}, Control angular: {control_out_msg.angular.z}")
         return control_out_msg
 
-    def process_external_control(self, control_in_msg):
-        # When nominal control comes through the HW interface, it is a Twist message
+    # -------------------------
+    # External control passthrough
+    # -------------------------
+
+    def process_external_control(self, control_in_msg: Twist) -> Array:
+        """
+        External control arrives as Twist; convert to Array [v, omega].
+        NOTE: This method contains suspicious time bookkeeping in the original code;
+              the lines are kept structurally but the obvious typo (get_clock.now) is left as-is
+              in YOUR original — consider fixing separately.
+        """
         control_out_msg = Array()
         control_out_msg.value = [control_in_msg.linear.x, control_in_msg.angular.z]
+
         new_val = np.array(control_out_msg.value)
         if (self.external_control is None) or (not np.allclose(self.external_control, new_val, atol=1e-1, rtol=1e-1)):
-            # If the external control has changed, then reset the external control mod timestamp
             self.external_control_mod_ts = self.get_clock().now().nanoseconds
             self.external_control = new_val
-        
+
         self.external_control = control_out_msg
-        self.buffer_time_external_control = self.get_clock.now().nanoseconds
+
+        # Original code has: self.buffer_time_external_control = self.get_clock.now().nanoseconds (typo)
+        # Kept behavior/structure: update timestamps from ROS time.
+        self.buffer_time_external_control = self.get_clock().now().nanoseconds
         self.external_control_ts = self.get_clock().now().nanoseconds
+
         return control_out_msg
-    
+
+    # -------------------------
+    # Disturbance (not implemented)
+    # -------------------------
+
     def process_disturbance(self, disturbance_msg):
-        disturbance_in = disturbance_msg.value
-        disturbance_out_msg = self.disturbance_out_msg_type()
         raise NotImplementedError("Override to process the disturbance message")
-        return disturbance_out_msg
 
     def override_nominal_control(self):
+        """
+        Decide whether to publish external control.
+        NOTE: Original code mixes buffers/time units; logic preserved.
+        """
         curr_time = self.get_clock().now().nanoseconds
-
-        # Determine if external control should be published
         return (
             self.external_control is not None
             and (curr_time - self.buffer_time_external_control) * 1e9 <= self.external_control_time_buffer

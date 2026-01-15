@@ -19,7 +19,7 @@ def load_yaml(file_path):
     with open(file_path, 'r') as file:
         return yaml.safe_load(file)
 
-
+# TODO: Clean up and add necessary additional arguments.
 def generate_launch_description():
     topics_config_path = os.path.join(get_package_share_directory(package_name), 'config', 'topics_config.yaml')
     topics_config = load_yaml(topics_config_path)['/**']['ros__parameters']
@@ -41,7 +41,7 @@ def generate_launch_description():
             'backend', default_value='sim',
             description='sim or hardware backend for turtlebot'),
         DeclareLaunchArgument(
-            'vf_update_method', default_value='pubsub',
+            'vf_update_method', default_value='file',
             description='Message parsing method for VF update'),
         DeclareLaunchArgument(
             'vf_update_accuracy', default_value='medium',
@@ -49,6 +49,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'do_hjr', default_value='True',
             description='Whether to use HJ Reachability'),
+        DeclareLaunchArgument(
+            'save_cbf', default_value='False',
+            description='Whether to save CBF after every goal'),
         # DeclareLaunchArgument(
         #     'env_config_file', default_value='/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml',
         #     description='Environment config file'),
@@ -97,18 +100,7 @@ def generate_launch_description():
                         ],
             remappings=[('robot/final_control', '/cmd_vel')]
         ),
-        # Node(
-        #     package='refinecbf_ros2',
-        #     executable='tb_visualization.py',
-        #     output='screen',
-        #     parameters=[topics_config_path,
-        #                 {'vf_update_method': LaunchConfiguration('vf_update_method'),
-        #                  'env_config_file': LaunchConfiguration('env_config_file'),
-        #                  'control_config_file': LaunchConfiguration('control_config_file'),
-        #                  }
-        #                  ],
-        # ),
-        # Include other launch files
+
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
                 PathJoinSubstitution([
@@ -128,6 +120,7 @@ def generate_launch_description():
                 'vf_update_accuracy': LaunchConfiguration('vf_update_accuracy'),
                 'use_sim_time': PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
                 'do_hjr': LaunchConfiguration('do_hjr'),
+                'save_cbf': LaunchConfiguration('save_cbf'),
             }.items()
         ),
 

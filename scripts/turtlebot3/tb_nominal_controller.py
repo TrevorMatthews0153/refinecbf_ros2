@@ -69,6 +69,8 @@ class TurtlebotNominalControl(NominalController):
         self.current_goal_pub = self.create_publisher(Array, "current_goal", 10)
         self.goals_reached_pub = self.create_publisher(Int32, "goals_reached", 10)
         self.goal_reached_sub = self.create_subscription(Bool, "goal_reached", self._goal_reached_cb, 10)
+        self.current_goal_info = self.create_publisher(Array, "current_goal_info", 10)
+        self.timer = self.create_timer(1.0, self.timer_callback)
 
         # State
         self.goal_idx = 0
@@ -85,6 +87,10 @@ class TurtlebotNominalControl(NominalController):
         self.start_controller()
 
     # ---------- Helpers ----------
+    def timer_callback(self):
+        msg = Array()
+        msg.value = [float(self.target[0]), float(self.target[1]), float(self.target[2]), float(self.target[3] if len(self.target) > 3 else 0.0)]
+        self.current_goal_info.publish(msg)
 
     def _load_goals_from_config(self):
         """
