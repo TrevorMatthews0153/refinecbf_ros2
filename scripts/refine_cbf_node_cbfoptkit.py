@@ -158,7 +158,7 @@ class SafetyFilterNode(Node):
             return
         try:
             try:
-                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+                self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/vf.npy").reshape(self.config.grid_shape)
             except ValueError:
                 self.get_logger().warn("Value function file has incorrect shape, skipping update")
                 return
@@ -168,7 +168,7 @@ class SafetyFilterNode(Node):
             try:
 
                 try:
-                    self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws//vf.npy").reshape(self.config.grid_shape)
+                    self.back_buffer_cbf.vf_table = np.load("/root/ros2_ws/vf.npy").reshape(self.config.grid_shape)
                 except ValueError:
                     self.get_logger().warn("Value function file has incorrect shape, skipping update")
                     return

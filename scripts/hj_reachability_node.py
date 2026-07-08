@@ -24,7 +24,8 @@ from refine_cbfs import TabularControlAffineCBF
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.8"
-jax.config.update("jax_platform_name", "gpu")
+# jax.config.update("jax_platform_name", "gpu")
+os.environ.setdefault("JAX_PLATFORMS", "cuda,cpu")
 
 
 class HJReachabilityNode(Node):
@@ -163,6 +164,7 @@ class HJReachabilityNode(Node):
         # ---- Publishers
         self.vf_pub = self._create_vf_publisher(self.vf_update_method, self.vf_topic)
         self.safe_cell_pub = self.create_publisher(Float32, self.safe_cell_topic, 1)
+        self.hjr_time_pub = self.create_publisher(Float32,"hjr_compute_time",10)
 
         # ---- Start
         self.publish_initial_vf()
@@ -181,7 +183,7 @@ class HJReachabilityNode(Node):
         if self.vf_update_method == "pubsub":
             self.vf_pub.publish(ValueFunctionMsg(vf=self.vf.flatten().tolist()))
         else:
-            np.save("/root/ros2_ws//vf.npy", np.array(self.vf))
+            np.save("/root/ros2_ws/vf.npy", np.array(self.vf))
             self.vf_pub.publish(Bool(data=True))
 
     def spin(self):
@@ -211,7 +213,7 @@ class HJReachabilityNode(Node):
         if msg.data and self.save_cbf:
             self.get_logger().info("Goal reached, saving CBF and SDF")
             self.current_goals_reached += 1
-            parent_dir = "/root/ros2_ws/noise_and_range_experiments/low_range_high_noise"
+            parent_dir = "/root/ros2_ws/iros_experiments/real_env_noise/sdf_gp_cbf_0.05/real_env_5"
             np.save(f"{parent_dir}/goal_{self.current_goals_reached}_cbf.npy", np.array(self.vf))
             np.save(f"{parent_dir}/goal_{self.current_goals_reached}_sdf.npy", np.array(self.sdf_values))
 
@@ -283,7 +285,9 @@ class HJReachabilityNode(Node):
                             progress_bar=False,
                         )
                         self.vf = jnp.minimum(new_values, self.sdf_values)
-                        self.get_logger().info("Time taken: {:.2f} s".format(time.time() - time_start))
+                    dt = time.time() - time_start
+                    self.get_logger().info("Time taken: {:.2f} s".format(dt))
+                    self.hjr_time_pub.publish(Float32(data=float(dt)))
             else:
                 self.vf = self.sdf_values.copy()
                 safe_cell_share = np.sum(self.vf >= 0) / self.vf.size

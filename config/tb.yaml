@@ -5,3 +5,4 @@
     topics:
       sdf_update: '/env/sdf_update'
       vf_update: '/safety_filter/vf_update'
+      safe_cell: '/safety_filter/safe_cell'

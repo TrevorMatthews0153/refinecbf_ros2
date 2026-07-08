@@ -177,6 +177,7 @@ class SDFPointCloudToGridNode(Node):
         super().__init__("sdf_pointcloud_to_grid")
 
         # --- Parameters
+        # Check if the params are provided in a launch file
         self.declare_parameter("env_config_path", "/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml")
         self.declare_parameter("mode", "file")  # "pubsub" or "file"
         self.declare_parameter("output_topic", "/env/sdf_update")

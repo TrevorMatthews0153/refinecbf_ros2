@@ -47,10 +47,10 @@ def generate_launch_description():
             'vf_update_accuracy', default_value='medium',
             description='Accuracy of HJ Reachability computation'),
         DeclareLaunchArgument(
-            'do_hjr', default_value='True',
+            'do_hjr', default_value='true',
             description='Whether to use HJ Reachability'),
         DeclareLaunchArgument(
-            'save_cbf', default_value='False',
+            'save_cbf', default_value='false',
             description='Whether to save CBF after every goal'),
         # DeclareLaunchArgument(
         #     'env_config_file', default_value='/root/ros2_ws/src/refinecbf_ros2/config/turtlebot/exp5/env.yaml',
